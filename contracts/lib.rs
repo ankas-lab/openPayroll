@@ -38,11 +38,18 @@ mod open_payroll {
     #[derive( scale::Encode, scale::Decode, Eq, PartialEq, Debug, Clone )]
     #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
     pub enum Error {
+        // The caller is not the owner of the contract
         NotOwner,
+        // The contract is paused
         ContractIsPaused,
+        // The params are invalid
         InvalidParams,
+        // The account is not found
         AccountNotFound,
-        NotEnoughBalanceInTreasury
+        // The contract does not have enough balance to pay
+        NotEnoughBalanceInTreasury,
+        // The transfer failed
+        TransferFailed
     }
 
     impl OpenPayroll {
@@ -75,7 +82,7 @@ mod open_payroll {
             self.paused_block_at.is_some()
         }
 
-        // Ensure_owner ensures that the caller is the owner of the contract
+        // ensure_in_not_pause ensures that the contract is not paused
         fn ensure_in_not_pause(&self)  -> Result< (), Error> {
             if self.is_paused() {
                 return Err(Error::ContractIsPaused);
@@ -115,24 +122,28 @@ mod open_payroll {
         /// Update the base_payment
         #[ink(message)]
         pub fn update_base_payment(&mut self, base_payment: Balance) -> Result< (), Error> {
-            // TODO: Sync unclaimed payments here
             self.ensure_owner()?;
             if base_payment == 0 {
                 return Err(Error::InvalidParams);
             }
+
+            // TODO: Sync unclaimed payments here
             self.base_payment = base_payment;
+
             Ok(())
         }
 
         /// Update the periodicity
         #[ink(message)]
         pub fn update_periodicity(&mut self, periodicity: u32) -> Result< (), Error>{
-            // TODO: Sync unclaimed payments here
             self.ensure_owner()?;
             if periodicity == 0 {
                 return Err(Error::InvalidParams);
             }
+
+            // TODO: Sync unclaimed payments here
             self.periodicity = periodicity;
+
             Ok(())
         }
 
@@ -141,12 +152,15 @@ mod open_payroll {
         pub fn claim_payment(&mut self) -> Result< (), Error> {
             self.ensure_in_not_pause()?;
             let account_id = self.env().caller();
+
             if !self.beneficiaries.contains(&account_id) {
                 return Err(Error::AccountNotFound);
             }
             let beneficiary = self.beneficiaries.get(&account_id).unwrap();
             let current_block = self.env().block_number();
+            // Calculates the number of blocks that have elapsed since the last payment
             let blocks_since_last_payment = current_block - beneficiary.last_payment_at_block;
+            // Calculates the number of payments that are due based on the elapsed blocks
             let payments = blocks_since_last_payment / self.periodicity;
             if payments == 0 { 
                 return Ok(());
@@ -157,10 +171,15 @@ mod open_payroll {
                 return Err(Error::NotEnoughBalanceInTreasury);
             }
             ink::env::debug_println!("total_payment: {}", total_payment);
-            self.env().transfer(account_id, total_payment).unwrap();
+            // Add the transfer checked if its failed
+            if let Err(_) = self.env().transfer(account_id, total_payment) {
+                return Err(Error::TransferFailed);
+            } 
+
             self.beneficiaries.insert(account_id, 
                 &Beneficiary { account_id, multiplier: beneficiary.multiplier, unclaimed_payments: 0, last_payment_at_block: current_block }
             );
+
             Ok(())
         }
 
