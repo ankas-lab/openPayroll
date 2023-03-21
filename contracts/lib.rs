@@ -2,141 +2,425 @@
 
 #[ink::contract]
 mod open_payroll {
+    use ink::storage::Mapping;//, primitives::AccountId};
+    use ink::storage::traits::{StorageLayout};
+    //type BlockNumber = <ink_env::DefaultEnvironment as ink_env::Environment>::BlockNumber;
 
-    /// Defines the storage of your contract.
-    /// Add new fields to the below struct in order
-    /// to add new static storage fields to your contract.
+    // TODO: Review frame arbitrary precission numbers primitives
+    type Multiplier = u128;
+
+    #[derive(scale::Encode, scale::Decode, Eq, PartialEq, Debug, Clone, StorageLayout)]
+    #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
+    pub struct Beneficiary {
+        account_id: AccountId,
+        multiplier: Multiplier,
+        unclaimed_payments: Balance,
+        // TODO: Maybe this needs to be an option? 
+        last_payment_at_block: BlockNumber,
+    }
+    
     #[ink(storage)]
     pub struct OpenPayroll {
-        /// Stores a single `bool` value on the storage.
-        value: bool,
+        /// The accountId of the creator of the contract, who has 'priviliged' access to do administrative tasks
+        owner: AccountId,
+        /// Mapping with the accounts of the beneficiaries and the multiplier to apply to the base payment
+        beneficiaries: Mapping<AccountId, Beneficiary>,
+        /// We pay out every n blocks
+        periodicity: u32, 
+        /// The amount of each base payment
+        base_payment: Balance,
+        /// The initial block number when this contract started, or the last block number when the contract was unpaused
+        last_active_block: u32,
+        /// The block number when the contract was paused
+        paused_block_at: Option<u32>
+    }
+
+    #[derive( scale::Encode, scale::Decode, Eq, PartialEq, Debug, Clone )]
+    #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
+    pub enum Error {
+        NotOwner,
+        ContractIsPaused,
+        InvalidParams,
+        AccountNotFound,
+        NotEnoughBalanceInTreasury
     }
 
     impl OpenPayroll {
-        /// Constructor that initializes the `bool` value to the given `init_value`.
         #[ink(constructor)]
-        pub fn new(init_value: bool) -> Self {
-            Self { value: init_value }
+        pub fn new(periodicity: u32, base_payment: Balance) -> Self {
+            let owner = Self::env().caller();
+            // TODO: move this to a parameter
+            let beneficiaries = Mapping::default();
+            Self { 
+                owner,
+                beneficiaries,
+                periodicity,
+                base_payment,
+                last_active_block: Self::env().block_number(),
+                paused_block_at: None
+            }
         }
 
-        /// Constructor that initializes the `bool` value to `false`.
-        ///
-        /// Constructors can delegate to other constructors.
-        #[ink(constructor)]
-        pub fn default() -> Self {
-            Self::new(Default::default())
+        // Ensure_owner ensures that the caller is the owner of the contract
+        fn ensure_owner(&self)  -> Result< (), Error> {
+            let account = self.env().caller();
+            // Only owners can call this function
+            if self.owner != account {
+                return Err(Error::NotOwner);
+            }
+            Ok(())
         }
 
-        /// A message that can be called on instantiated contracts.
-        /// This one flips the value of the stored `bool` from `true`
-        /// to `false` and vice versa.
+        fn is_paused(&self) -> bool {
+            self.paused_block_at.is_some()
+        }
+
+        // Ensure_owner ensures that the caller is the owner of the contract
+        fn ensure_in_not_pause(&self)  -> Result< (), Error> {
+            if self.is_paused() {
+                return Err(Error::ContractIsPaused);
+            }
+            Ok(())
+        }
+
+
+        /// Add a new beneficiary or modify the multiplier of an existing one.
         #[ink(message)]
-        pub fn flip(&mut self) {
-            self.value = !self.value;
+        pub fn add_or_update_beneficiary(&mut self, account_id: AccountId, multiplier: Multiplier) -> Result< (), Error> {
+            self.ensure_owner()?;
+            if multiplier == 0 {
+                return Err(Error::InvalidParams);
+            }
+            if let Some(beneficiary) =  self.beneficiaries.get(&account_id) {
+                // update the multiplier
+                self.beneficiaries.insert(account_id, &Beneficiary { account_id, multiplier, unclaimed_payments: beneficiary.unclaimed_payments, last_payment_at_block: beneficiary.last_payment_at_block });
+            } else {
+                // add a new beneficiary
+                self.beneficiaries.insert(account_id, &Beneficiary { account_id, multiplier, unclaimed_payments: 0, last_payment_at_block:0 });
+            }
+            Ok(())
         }
 
-        /// Simply returns the current value of our `bool`.
+        /// Remove a beneficiary
         #[ink(message)]
-        pub fn get(&self) -> bool {
-            self.value
+        pub fn remove_beneficiary(&mut self, account_id: AccountId) -> Result< (), Error> {
+            self.ensure_owner()?;
+            if !self.beneficiaries.contains(&account_id) {
+                return Err(Error::AccountNotFound);
+            }
+            self.beneficiaries.remove(&account_id);
+            Ok(())
         }
+
+        /// Update the base_payment
+        #[ink(message)]
+        pub fn update_base_payment(&mut self, base_payment: Balance) -> Result< (), Error> {
+            // TODO: Sync unclaimed payments here
+            self.ensure_owner()?;
+            if base_payment == 0 {
+                return Err(Error::InvalidParams);
+            }
+            self.base_payment = base_payment;
+            Ok(())
+        }
+
+        /// Update the periodicity
+        #[ink(message)]
+        pub fn update_periodicity(&mut self, periodicity: u32) -> Result< (), Error>{
+            // TODO: Sync unclaimed payments here
+            self.ensure_owner()?;
+            if periodicity == 0 {
+                return Err(Error::InvalidParams);
+            }
+            self.periodicity = periodicity;
+            Ok(())
+        }
+
+        /// Claim payment for a single account id
+        #[ink(message)]
+        pub fn claim_payment(&mut self) -> Result< (), Error> {
+            self.ensure_in_not_pause()?;
+            let account_id = self.env().caller();
+            if !self.beneficiaries.contains(&account_id) {
+                return Err(Error::AccountNotFound);
+            }
+            let beneficiary = self.beneficiaries.get(&account_id).unwrap();
+            let current_block = self.env().block_number();
+            let blocks_since_last_payment = current_block - beneficiary.last_payment_at_block;
+            let payments = blocks_since_last_payment / self.periodicity;
+            if payments == 0 { 
+                return Ok(());
+            }
+            let total_payment = self.base_payment * payments as u128 * beneficiary.multiplier + beneficiary.unclaimed_payments;
+            let treasury_balance = self.env().balance();
+            if total_payment > treasury_balance {
+                return Err(Error::NotEnoughBalanceInTreasury);
+            }
+            ink::env::debug_println!("total_payment: {}", total_payment);
+            self.env().transfer(account_id, total_payment).unwrap();
+            self.beneficiaries.insert(account_id, 
+                &Beneficiary { account_id, multiplier: beneficiary.multiplier, unclaimed_payments: 0, last_payment_at_block: current_block }
+            );
+            Ok(())
+        }
+
+        /// Calculate outstanding payments for the entire DAO -- this call can be expensive!!!
+        #[ink(message)]
+        pub fn calculate_outstanding_payments(&self) -> Result< Balance, Error> {
+            todo!();
+        }
+
+        // TODO Add method to bulk add beneficiaries
+        // #[ink(message)]
+        // pub fn add_beneficiaries(&mut self, beneficiaries: Vec<AccountId, Multiplier>) {
+        //     // let caller = self.env().caller();
+        //     // assert_eq!(caller, self.owner, "Only the owner can add beneficiaries");
+        //     // self.beneficiaries.push(account_id);
+        //     // self.multipliers.insert(account_id, &multiplier);
+        // }
+
+        /// Pause the contract
+        #[ink(message)]
+        pub fn pause(&mut self) -> Result< (), Error> {
+            self.ensure_owner()?;
+            if self.is_paused() {
+                return Ok(());
+            }
+            self.paused_block_at = Some(self.env().block_number());
+            Ok(())
+        }
+
+        /// Resume the contract
+        #[ink(message)]
+        pub fn resume(&mut self) -> Result< (), Error> {
+            self.ensure_owner()?;
+            if !self.is_paused() {
+                return Ok(());
+            }
+            let current_block = self.env().block_number();
+            self.last_active_block = current_block;
+            self.paused_block_at = None;
+            Ok(())
+        }
+        
     }
 
-    /// Unit tests in Rust are normally defined within such a `#[cfg(test)]`
-    /// module and test functions are marked with a `#[test]` attribute.
-    /// The below code is technically just normal Rust code.
     #[cfg(test)]
     mod tests {
-        /// Imports all the definitions from the outer scope so we can use them here.
         use super::*;
+
+        // UTILITY FUNCTIONS TO MAKE TESTING EASIER
+        fn create_contract(initial_balance: Balance) -> OpenPayroll {
+            set_balance(contract_id(), initial_balance);
+            OpenPayroll::new(2, 100)
+        }
+
+        fn contract_id() -> AccountId {
+            ink::env::test::callee::<ink::env::DefaultEnvironment>()
+        }
+
+        fn set_sender(sender: AccountId) {
+            ink::env::test::set_caller::<ink::env::DefaultEnvironment>(sender);
+        }
+
+        fn default_accounts(
+        ) -> ink::env::test::DefaultAccounts<ink::env::DefaultEnvironment> {
+            ink::env::test::default_accounts::<ink::env::DefaultEnvironment>()
+        }
+
+        fn set_balance(account_id: AccountId, balance: Balance) {
+            ink::env::test::set_account_balance::<ink::env::DefaultEnvironment>(
+                account_id, balance,
+            )
+        }
+
+        fn advance_block() {
+            ink::env::test::advance_block::<ink::env::DefaultEnvironment>();
+        }
+
+        fn get_current_block() -> u32 { 
+            ink::env::block_number::<ink::env::DefaultEnvironment>()
+        }
+
+        fn get_balance(account_id: AccountId) -> Balance {
+            ink::env::test::get_account_balance::<ink::env::DefaultEnvironment>(
+                account_id,
+            )
+            .expect("Cannot get account balance")
+        }
 
         /// We test if the default constructor does its job.
         #[ink::test]
         fn default_works() {
-            let open_payroll = OpenPayroll::default();
-            assert_eq!(open_payroll.get(), false);
+            let accounts = default_accounts();
+            set_sender(accounts.alice);
+            create_contract(100_000_000u128)
         }
-
-        /// We test a simple use case of our contract.
+        
+        /// Add a new beneficiary and check that it is added
         #[ink::test]
-        fn it_works() {
-            let mut open_payroll = OpenPayroll::new(false);
-            assert_eq!(open_payroll.get(), false);
-            open_payroll.flip();
-            assert_eq!(open_payroll.get(), true);
-        }
-    }
-
-
-    /// This is how you'd write end-to-end (E2E) or integration tests for ink! contracts.
-    ///
-    /// When running these you need to make sure that you:
-    /// - Compile the tests with the `e2e-tests` feature flag enabled (`--features e2e-tests`)
-    /// - Are running a Substrate node which contains `pallet-contracts` in the background
-    #[cfg(all(test, feature = "e2e-tests"))]
-    mod e2e_tests {
-        /// Imports all the definitions from the outer scope so we can use them here.
-        use super::*;
-
-        /// A helper function used for calling contract messages.
-        use ink_e2e::build_message;
-
-        /// The End-to-End test `Result` type.
-        type E2EResult<T> = std::result::Result<T, Box<dyn std::error::Error>>;
-
-        /// We test that we can upload and instantiate the contract using its default constructor.
-        #[ink_e2e::test]
-        async fn default_works(mut client: ink_e2e::Client<C, E>) -> E2EResult<()> {
-            // Given
-            let constructor = OpenPayrollRef::default();
-
-            // When
-            let contract_account_id = client
-                .instantiate("open_payroll", &ink_e2e::alice(), constructor, 0, None)
-                .await
-                .expect("instantiate failed")
-                .account_id;
-
-            // Then
-            let get = build_message::<OpenPayrollRef>(contract_account_id.clone())
-                .call(|open_payroll| open_payroll.get());
-            let get_result = client.call_dry_run(&ink_e2e::alice(), &get, 0, None).await;
-            assert!(matches!(get_result.return_value(), false));
-
-            Ok(())
+        fn add_beneficiary() {
+            let accounts = default_accounts();
+            set_sender(accounts.alice);
+            let mut contract = create_contract(100_000_000u128);
+            contract.add_or_update_beneficiary(accounts.bob, 100u128).unwrap();
+            assert_eq!(contract.beneficiaries.get(&accounts.bob).unwrap().multiplier, 100u128);
+            contract.add_or_update_beneficiary(accounts.bob, 200u128).unwrap();
+            assert_eq!(contract.beneficiaries.get(&accounts.bob).unwrap().multiplier, 200u128);
         }
 
-        /// We test that we can read and write a value from the on-chain contract contract.
-        #[ink_e2e::test]
-        async fn it_works(mut client: ink_e2e::Client<C, E>) -> E2EResult<()> {
-            // Given
-            let constructor = OpenPayrollRef::new(false);
-            let contract_account_id = client
-                .instantiate("open_payroll", &ink_e2e::bob(), constructor, 0, None)
-                .await
-                .expect("instantiate failed")
-                .account_id;
-
-            let get = build_message::<OpenPayrollRef>(contract_account_id.clone())
-                .call(|open_payroll| open_payroll.get());
-            let get_result = client.call_dry_run(&ink_e2e::bob(), &get, 0, None).await;
-            assert!(matches!(get_result.return_value(), false));
-
-            // When
-            let flip = build_message::<OpenPayrollRef>(contract_account_id.clone())
-                .call(|open_payroll| open_payroll.flip());
-            let _flip_result = client
-                .call(&ink_e2e::bob(), flip, 0, None)
-                .await
-                .expect("flip failed");
-
-            // Then
-            let get = build_message::<OpenPayrollRef>(contract_account_id.clone())
-                .call(|open_payroll| open_payroll.get());
-            let get_result = client.call_dry_run(&ink_e2e::bob(), &get, 0, None).await;
-            assert!(matches!(get_result.return_value(), true));
-
-            Ok(())
+        /// Add a new beneficiary and fails because the sender is not the owner
+        #[ink::test]
+        fn add_beneficiary_without_access() {
+            let accounts = default_accounts();
+            set_sender(accounts.alice);
+            let mut contract = create_contract(100_000_000u128);
+            set_sender(accounts.bob);
+            assert!(matches!(contract.add_or_update_beneficiary(accounts.bob, 100u128), Err(Error::NotOwner)));
         }
+
+        /// Add a new beneficiary and fails because the multiplies is 0
+        #[ink::test]
+        fn add_beneficiary_invalid_multiplier() {
+            let accounts = default_accounts();
+            set_sender(accounts.alice);
+            let mut contract = create_contract(100_000_000u128);
+            assert!(matches!(contract.add_or_update_beneficiary(accounts.bob, 0u128), Err(Error::InvalidParams)));
+        }
+
+        /// Remove a beneficiary and check that it is removed
+        #[ink::test]
+        fn remove_beneficiary() {
+            let accounts = default_accounts();
+            set_sender(accounts.alice);
+            let mut contract = create_contract(100_000_000u128);
+            contract.add_or_update_beneficiary(accounts.bob, 100u128).unwrap();
+            assert_eq!(contract.beneficiaries.get(&accounts.bob).unwrap().multiplier, 100u128);
+            contract.remove_beneficiary(accounts.bob).unwrap();
+            assert_eq!(contract.beneficiaries.contains(&accounts.bob), false);
+        }
+
+        /// Remove a beneficiary and fails because the sender is not the owner
+        #[ink::test]
+        fn remove_beneficiary_without_access() {
+            let accounts = default_accounts();
+            set_sender(accounts.alice);
+            let mut contract = create_contract(100_000_000u128);
+            contract.add_or_update_beneficiary(accounts.bob, 100u128).unwrap();
+            set_sender(accounts.bob);
+            assert!(matches!(contract.remove_beneficiary(accounts.bob), Err(Error::NotOwner)));
+        }     
+
+        /// Remove a beneficiary and fails because the beneficiary does not exist
+        #[ink::test]
+        fn remove_beneficiary_not_found() {
+            let accounts = default_accounts();
+            set_sender(accounts.alice);
+            let mut contract = create_contract(100_000_000u128);
+            assert!(matches!(contract.remove_beneficiary(accounts.bob), Err(Error::AccountNotFound)));
+        }
+
+        /// Update the base payment and check that it is updated
+        #[ink::test]
+        fn update_base_payment() {
+            let accounts = default_accounts();
+            set_sender(accounts.alice);
+            let mut contract = create_contract(100_000_000u128);
+            contract.update_base_payment(200_000_000u128).unwrap();
+            assert_eq!(contract.base_payment, 200_000_000u128);
+        }
+
+        /// Update the base payment but fails because the sender is not the owner
+        #[ink::test]
+        fn update_base_payment_without_access() {
+            let accounts = default_accounts();
+            set_sender(accounts.alice);
+            let mut contract = create_contract(100_000_000u128);
+            set_sender(accounts.bob);
+            assert!(matches!(contract.update_base_payment(200_000_000u128), Err(Error::NotOwner)));
+        }
+
+        /// Update the base payment but fails because the base payment is 0
+        #[ink::test]
+        fn update_base_payment_invalid_base_payment() {
+            let accounts = default_accounts();
+            set_sender(accounts.alice);
+            let mut contract = create_contract(100_000_000u128);
+            assert!(matches!(contract.update_base_payment(0u128), Err(Error::InvalidParams)));
+        }
+
+        /// Update the periodicity and check that it is updated
+        #[ink::test]
+        fn update_periodicity() {
+            let accounts = default_accounts();
+            set_sender(accounts.alice);
+            let mut contract = create_contract(100_000_000u128);
+            contract.update_periodicity(100u32).unwrap();
+            assert_eq!(contract.periodicity, 100u32);
+        }
+
+        /// Update the periodicity but fails because the sender is not the owner
+        #[ink::test]
+        fn update_periodicity_without_access() {
+            let accounts = default_accounts();
+            set_sender(accounts.alice);
+            let mut contract = create_contract(100_000_000u128);
+            set_sender(accounts.bob);
+            assert!(matches!(contract.update_periodicity(100u32), Err(Error::NotOwner)));
+        }
+
+        /// Update the periodicity but fails because the periodicity is 0
+        #[ink::test]
+        fn update_periodicity_invalid_periodicity() {
+            let accounts = default_accounts();
+            set_sender(accounts.alice);
+            let mut contract = create_contract(100_000_000u128);
+            assert!(matches!(contract.update_periodicity(0u32), Err(Error::InvalidParams)));
+        }
+
+        /// Test pausing and unpausing the contract
+        #[ink::test]
+        fn pause_and_resume() {
+            let accounts = default_accounts();
+            set_sender(accounts.alice);
+            let starting_block = get_current_block();
+            let mut contract = create_contract(100_000_000u128);
+            contract.pause().unwrap();
+            assert_eq!(contract.is_paused(), true);
+            advance_block();
+            contract.resume().unwrap();
+            assert_eq!(contract.is_paused(), false);
+            assert!(contract.last_active_block > starting_block);
+        }
+
+        /// Test pausing and resuming without access
+        #[ink::test]
+        fn pause_and_resume_without_access() {
+            let accounts = default_accounts();
+            set_sender(accounts.alice);
+            let mut contract = create_contract(100_000_000u128);
+            set_sender(accounts.bob);
+            assert!(matches!(contract.pause(), Err(Error::NotOwner)));
+            assert!(matches!(contract.resume(), Err(Error::NotOwner)));
+        }
+
+        /// Test claiming a payment
+        #[ink::test]
+        fn claim_payment() {
+            let accounts = default_accounts();
+            set_sender(accounts.alice);
+            let mut contract = create_contract(100_000_000u128);
+            contract.add_or_update_beneficiary(accounts.bob, 10u128).unwrap();
+            // advance 3 blocks so a payment will be claimable
+            advance_block();
+            advance_block();
+            advance_block();
+            let contract_balance_before_payment = get_balance(contract.owner);
+            let bob_balance_before_payment = get_balance(accounts.bob);
+            set_sender(accounts.bob);
+            contract.claim_payment().unwrap();
+            assert!(get_balance(contract.owner) < contract_balance_before_payment);
+            assert!(get_balance(accounts.bob) > bob_balance_before_payment);
+        }   
     }
 }
