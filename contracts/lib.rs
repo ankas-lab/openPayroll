@@ -25,6 +25,8 @@ mod open_payroll {
         owner: AccountId,
         /// Mapping with the accounts of the beneficiaries and the multiplier to apply to the base payment
         beneficiaries: Mapping<AccountId, Beneficiary>,
+        // Vector of Accounts
+        beneficiaries_accounts: Vec<AccountId>,
         /// We pay out every n blocks
         periodicity: u32, 
         /// The amount of each base payment
@@ -64,7 +66,8 @@ mod open_payroll {
                 periodicity,
                 base_payment,
                 last_active_block: Self::env().block_number(),
-                paused_block_at: None
+                paused_block_at: None,
+                beneficiaries_accounts: Vec::default()
             }
         }
 
@@ -104,6 +107,7 @@ mod open_payroll {
             } else {
                 // add a new beneficiary
                 self.beneficiaries.insert(account_id, &Beneficiary { account_id, multiplier, unclaimed_payments: 0, last_payment_at_block:0 });
+                self.beneficiaries_accounts.push(account_id);
             }
             Ok(())
         }
@@ -116,6 +120,7 @@ mod open_payroll {
                 return Err(Error::AccountNotFound);
             }
             self.beneficiaries.remove(&account_id);
+            self.beneficiaries_accounts.retain(|&x| x != account_id);
             Ok(())
         }
 
@@ -286,6 +291,8 @@ mod open_payroll {
             assert_eq!(contract.beneficiaries.get(&accounts.bob).unwrap().multiplier, 100u128);
             contract.add_or_update_beneficiary(accounts.bob, 200u128).unwrap();
             assert_eq!(contract.beneficiaries.get(&accounts.bob).unwrap().multiplier, 200u128);
+            // check if account was added to the vector
+            assert_eq!(contract.beneficiaries_accounts.get(0).unwrap(), &accounts.bob);
         }
 
         /// Add a new beneficiary and fails because the sender is not the owner
@@ -296,6 +303,8 @@ mod open_payroll {
             let mut contract = create_contract(100_000_000u128);
             set_sender(accounts.bob);
             assert!(matches!(contract.add_or_update_beneficiary(accounts.bob, 100u128), Err(Error::NotOwner)));
+            // check if account was NOT added to the vector
+            assert_eq!(contract.beneficiaries_accounts.len(), 0);
         }
 
         /// Add a new beneficiary and fails because the multiplies is 0
@@ -314,9 +323,13 @@ mod open_payroll {
             set_sender(accounts.alice);
             let mut contract = create_contract(100_000_000u128);
             contract.add_or_update_beneficiary(accounts.bob, 100u128).unwrap();
+            assert_eq!(contract.beneficiaries_accounts.len(), 1);
+            assert_eq!(contract.beneficiaries_accounts.get(0).unwrap(), &accounts.bob);
             assert_eq!(contract.beneficiaries.get(&accounts.bob).unwrap().multiplier, 100u128);
             contract.remove_beneficiary(accounts.bob).unwrap();
             assert_eq!(contract.beneficiaries.contains(&accounts.bob), false);
+            // check if account was removed from the vector
+            assert_eq!(contract.beneficiaries_accounts.len(), 0);
         }
 
         /// Remove a beneficiary and fails because the sender is not the owner
@@ -328,6 +341,8 @@ mod open_payroll {
             contract.add_or_update_beneficiary(accounts.bob, 100u128).unwrap();
             set_sender(accounts.bob);
             assert!(matches!(contract.remove_beneficiary(accounts.bob), Err(Error::NotOwner)));
+            assert_eq!(contract.beneficiaries_accounts.len(), 1);
+            assert_eq!(contract.beneficiaries_accounts.get(0).unwrap(), &accounts.bob);
         }     
 
         /// Remove a beneficiary and fails because the beneficiary does not exist
