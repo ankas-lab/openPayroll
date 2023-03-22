@@ -3,14 +3,15 @@
 #[ink::contract]
 mod open_payroll {
     use ink::storage::Mapping;//, primitives::AccountId};
+    use ink::prelude::vec::Vec;
     use ink::storage::traits::{StorageLayout};
     //type BlockNumber = <ink_env::DefaultEnvironment as ink_env::Environment>::BlockNumber;
 
     // TODO: Review frame arbitrary precission numbers primitives
     type Multiplier = u128;
 
-    #[derive(scale::Encode, scale::Decode, Eq, PartialEq, Debug, Clone, StorageLayout)]
-    #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
+    #[derive(scale::Encode, scale::Decode, Eq, PartialEq, Debug, Clone)]
+    #[cfg_attr(feature = "std", derive(scale_info::TypeInfo, StorageLayout))]
     pub struct Beneficiary {
         account_id: AccountId,
         multiplier: Multiplier,
