@@ -33,6 +33,8 @@ mod open_payroll {
         base_payment: Balance,
         /// The initial block number when this contract started, or the last block number when the contract was unpaused
         last_active_block: u32,
+        /// The initial block number.
+        initial_block: u32,
         /// The block number when the contract was paused
         paused_block_at: Option<u32>
     }
@@ -66,6 +68,7 @@ mod open_payroll {
                 periodicity,
                 base_payment,
                 last_active_block: Self::env().block_number(),
+                initial_block: Self::env().block_number(),
                 paused_block_at: None,
                 beneficiaries_accounts: Vec::default()
             }
@@ -425,6 +428,8 @@ mod open_payroll {
             contract.resume().unwrap();
             assert_eq!(contract.is_paused(), false);
             assert!(contract.last_active_block > starting_block);
+            // check for the starting block to be the same
+            assert_eq!(contract.initial_block, starting_block);
         }
 
         /// Test pausing and resuming without access
