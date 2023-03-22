@@ -105,10 +105,12 @@ mod open_payroll {
             multipliers: Vec<Multiplier>,
         ) -> Result<(), Error> {
             self.ensure_owner()?;
-            if multipliers.is_empty() {
+
+            // Check that the multipliers are valid and have the same length as the base_multipliers
+            if multipliers.len() != self.base_multipliers.len() {
                 return Err(Error::InvalidParams);
             }
-            // TODO: Check that the multipliers are valid and have the same length as the base_multipliers, and that the range is valid
+
             if let Some(beneficiary) = self.beneficiaries.get(&account_id) {
                 // update the multiplier
                 self.beneficiaries.insert(
@@ -193,6 +195,7 @@ mod open_payroll {
             if !self.beneficiaries.contains(&account_id) {
                 return Err(Error::AccountNotFound);
             }
+
             let beneficiary = self.beneficiaries.get(&account_id).unwrap();
             let current_block = self.env().block_number();
 
@@ -206,7 +209,12 @@ mod open_payroll {
             }
 
             // E.g (M1 + M2) * B / 100
-            let final_multiplier: u128 = beneficiary.multipliers.iter().sum();
+            let final_multiplier: u128 = if beneficiary.multipliers.is_empty() {
+                1
+            } else {
+                beneficiary.multipliers.iter().sum()
+            };
+
             let payment_per_period: Balance = final_multiplier * self.base_payment / 100;
             let total_payment =
                 payment_per_period * unclaimed_periods as u128 + beneficiary.unclaimed_payments;
