@@ -570,6 +570,7 @@ mod open_payroll {
             contract.claim_payment().unwrap();
             assert!(get_balance(contract.owner) < contract_balance_before_payment);
             assert!(get_balance(accounts.bob) > bob_balance_before_payment);
+            assert!(false);
         }
     }
 }
