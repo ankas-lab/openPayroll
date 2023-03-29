@@ -91,6 +91,6 @@ jobs:
             cargo -vV
             cargo contract --version
 
-      - name: ${{ matrix.job }} examples on ${{ matrix.platform }}-${{ matrix.toolchain }}
+      - name: ${{ matrix.job }} on ${{ matrix.platform }}-${{ matrix.toolchain }}
         run: |
            cd contracts ; cargo ${{ matrix.job }} --verbose
