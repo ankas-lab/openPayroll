@@ -1,0 +1,96 @@
+name: continuous-intergration/examples
+
+on:
+  push:
+    branches:
+      - master
+      - dev
+    tags:
+        - v*
+    paths-ignore:
+      - 'README.md'
+      - '.gitlab-ci.yml'
+  pull_request:
+    branches:
+      - master
+      - dev
+
+jobs:
+  check:
+    name: build-contract
+    strategy:
+      matrix:
+        platform:
+          - ubuntu-latest
+#          - windows-latest
+#          - macos-latest
+        toolchain:
+          - stable
+        job:
+          # - contract build
+          - test
+    runs-on: ${{ matrix.platform }}
+    env:
+      UPGRADEABLE_CONTRACTS:    "forward-calls set-code-hash"
+      DELEGATOR_SUBCONTRACTS:   "accumulator adder subber"
+      RUST_BACKTRACE:           full
+    steps:
+
+      - name: Checkout sources & submodules
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 1
+          submodules: recursive
+
+      - name: Install toolchain
+        id: toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: ${{ matrix.toolchain }}
+          components: rust-src
+          override: true
+
+      - name: Install cargo-dylint
+        uses: baptiste0928/cargo-install@48c92f3d491efa23daace9891498a14c5aaa1afd # v2.0.0
+        with:
+          crate: cargo-dylint
+          version: 1
+
+      - name: Install dylint-link
+        uses: baptiste0928/cargo-install@48c92f3d491efa23daace9891498a14c5aaa1afd # v2.0.0
+        with:
+          crate: dylint-link
+          version: 1
+
+      - name: Download and run latest `substrate-contracts-node` binary
+        if: matrix.os == 'macOS-latest'
+        run: |
+            curl -L -o substrate-contracts-node.zip 'https://gitlab.parity.io/parity/mirrors/substrate-contracts-node/-/jobs/artifacts/main/download?job=build-mac' && \
+            unzip substrate-contracts-node.zip && \
+            chmod +x artifacts/substrate-contracts-node-mac/substrate-contracts-node &&
+            ./artifacts/substrate-contracts-node-mac/substrate-contracts-node -linfo,runtime::contracts=debug  2>&1 | tee /tmp/contracts-node.log &
+
+      - name: Install and run latest `substrate-contracts-node` binary
+        if: matrix.os == 'windows-latest'
+        run: |
+            cargo install contracts-node --git https://github.com/paritytech/substrate-contracts-node.git --force --locked && \
+            substrate-contracts-node -lruntime::contracts=debug  2>&1 | tee /tmp/contracts-node.log &
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2.2.1
+
+      - name: Install `cargo-contract` `master`
+        uses: actions-rs/cargo@v1
+        with:
+            command: install
+            args: --git https://github.com/paritytech/cargo-contract.git
+
+      - name: Output versions
+        run: |
+            cargo -vV
+            cargo contract --version
+
+      - name: ${{ matrix.job }} on ${{ matrix.platform }}-${{ matrix.toolchain }}
+        run: |
+           cd contracts ; cargo ${{ matrix.job }} --verbose
