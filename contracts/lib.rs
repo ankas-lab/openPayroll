@@ -17,7 +17,7 @@ mod open_payroll {
         multipliers: Vec<Multiplier>,
         unclaimed_payments: Balance,
         // TODO: Maybe this needs to be an option?
-        last_payment_at_block: BlockNumber,
+        last_claimed_period_block: BlockNumber,
     }
 
     #[ink(storage)]
@@ -55,15 +55,26 @@ mod open_payroll {
         NotEnoughBalanceInTreasury,
         // The transfer failed
         TransferFailed,
+        // The beneficiary has no unclaimed payments
+        NoUnclaimedPayments,
     }
 
     impl OpenPayroll {
         #[ink(constructor)]
-        pub fn new(periodicity: u32, base_payment: Balance, base_multipliers: Vec<String>) -> Self {
+        pub fn new(
+            periodicity: u32,
+            base_payment: Balance,
+            base_multipliers: Vec<String>,
+        ) -> Result<Self, Error> {
             let owner = Self::env().caller();
             // TODO: move this to a parameter
+
+            if base_payment <= 0 || periodicity == 0 {
+                return Err(Error::InvalidParams);
+            }
+
             let beneficiaries = Mapping::default();
-            Self {
+            Ok(Self {
                 owner,
                 beneficiaries,
                 periodicity,
@@ -72,7 +83,7 @@ mod open_payroll {
                 paused_block_at: None,
                 beneficiaries_accounts: Vec::default(),
                 base_multipliers,
-            }
+            })
         }
 
         // Ensure_owner ensures that the caller is the owner of the contract
@@ -89,8 +100,8 @@ mod open_payroll {
             self.paused_block_at.is_some()
         }
 
-        // ensure_in_not_pause ensures that the contract is not paused
-        fn ensure_in_not_pause(&self) -> Result<(), Error> {
+        // ensure_in_not_paused ensures that the contract is not paused
+        fn ensure_in_not_paused(&self) -> Result<(), Error> {
             if self.is_paused() {
                 return Err(Error::ContractIsPaused);
             }
@@ -119,7 +130,7 @@ mod open_payroll {
                         account_id,
                         multipliers,
                         unclaimed_payments: beneficiary.unclaimed_payments,
-                        last_payment_at_block: beneficiary.last_payment_at_block,
+                        last_claimed_period_block: beneficiary.last_claimed_period_block,
                     },
                 );
             } else {
@@ -130,7 +141,7 @@ mod open_payroll {
                         account_id,
                         multipliers,
                         unclaimed_payments: 0,
-                        last_payment_at_block: 0,
+                        last_claimed_period_block: 0,
                     },
                 );
                 self.beneficiaries_accounts.push(account_id);
@@ -189,7 +200,7 @@ mod open_payroll {
         /// Claim payment for a single account id
         #[ink(message)]
         pub fn claim_payment(&mut self) -> Result<(), Error> {
-            self.ensure_in_not_pause()?;
+            self.ensure_in_not_paused()?;
             let account_id = self.env().caller();
 
             if !self.beneficiaries.contains(&account_id) {
@@ -200,14 +211,15 @@ mod open_payroll {
             let current_block = self.env().block_number();
 
             // Calculates the number of blocks that have elapsed since the last payment
-            let blocks_since_last_payment = current_block - beneficiary.last_payment_at_block;
+            let blocks_since_last_payment = current_block - beneficiary.last_claimed_period_block;
 
             // Calculates the number of payments that are due based on the elapsed blocks
             let unclaimed_periods: u128 = (blocks_since_last_payment / self.periodicity).into();
             if unclaimed_periods == 0 {
-                return Ok(());
+                return Err(Error::NoUnclaimedPayments);
             }
 
+            //TODO Check if multipliers.length == base_multipliers.length
             // E.g (M1 + M2) * B / 100
             let final_multiplier: u128 = if beneficiary.multipliers.is_empty() {
                 1
@@ -229,13 +241,16 @@ mod open_payroll {
                 return Err(Error::TransferFailed);
             }
 
+            let claimed_period_block =
+                current_block - ((current_block - self.initial_block) % self.periodicity);
+
             self.beneficiaries.insert(
                 account_id,
                 &Beneficiary {
                     account_id,
                     multipliers: beneficiary.multipliers,
                     unclaimed_payments: 0,
-                    last_payment_at_block: current_block,
+                    last_claimed_period_block: claimed_period_block,
                 },
             );
 
@@ -292,6 +307,7 @@ mod open_payroll {
                 1000,
                 vec!["Seniority".to_string(), "Performance".to_string()],
             )
+            .expect("Cannot create contract")
         }
 
         fn contract_id() -> AccountId {
