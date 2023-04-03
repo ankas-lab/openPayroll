@@ -197,11 +197,24 @@ mod open_payroll {
             Ok(())
         }
 
-        /// Claim payment for a single account id
+        /// Update claim amount in storage without transferring the funds
         #[ink(message)]
-        pub fn claim_payment(&mut self) -> Result<(), Error> {
+        pub fn update_storage_claim(&mut self, account_id: AccountId) -> Result<(), Error> {
+            let (mut beneficiary, total) = Self::get_amount_to_claim(self, account_id)?;
+
+            // update into storage the unclaimed payments and the last claimed period
+            beneficiary.unclaimed_payments = total;
+            beneficiary.last_claimed_period_block = self.env().block_number();
+
+            Ok(())
+        }
+
+        /// Get amount in storage without transferring the funds
+        pub fn get_amount_to_claim(
+            &mut self,
+            account_id: AccountId,
+        ) -> Result<(Beneficiary, Balance), Error> {
             self.ensure_in_not_paused()?;
-            let account_id = self.env().caller();
 
             if !self.beneficiaries.contains(&account_id) {
                 return Err(Error::AccountNotFound);
@@ -230,6 +243,18 @@ mod open_payroll {
             let payment_per_period: Balance = final_multiplier * self.base_payment / 100;
             let total_payment =
                 payment_per_period * unclaimed_periods as u128 + beneficiary.unclaimed_payments;
+
+            Ok((beneficiary, total_payment))
+        }
+
+        /// Claim payment for a single account id
+        #[ink(message)]
+        pub fn claim_payment(&mut self) -> Result<(), Error> {
+            self.ensure_in_not_paused()?;
+            let account_id = self.env().caller();
+            let current_block = self.env().block_number();
+
+            let (beneficiary, total_payment) = Self::get_amount_to_claim(self, account_id)?;
 
             let treasury_balance = self.env().balance();
             if total_payment > treasury_balance {
