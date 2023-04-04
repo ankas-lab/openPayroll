@@ -212,6 +212,8 @@ mod open_payroll {
             // get the block from the last period claimed
             beneficiary.last_claimed_period_block = claimed_period_block;
 
+            self.beneficiaries.insert(account_id, &beneficiary);
+
             Ok(())
         }
 
@@ -232,6 +234,10 @@ mod open_payroll {
             // Calculates the number of payments that are due based on the elapsed blocks
             let unclaimed_periods: u128 = (blocks_since_last_payment / self.periodicity).into();
             if unclaimed_periods == 0 {
+                if beneficiary.unclaimed_payments != 0 {
+                    return Ok(beneficiary.unclaimed_payments);
+                }
+
                 return Err(Error::NoUnclaimedPayments);
             }
 
@@ -321,6 +327,17 @@ mod open_payroll {
             }
             self.paused_block_at = None;
             Ok(())
+        }
+
+        /// Get beneficiary only read
+        #[ink(message)]
+        pub fn get_beneficiary(&mut self, account_id: AccountId) -> Result<Beneficiary, Error> {
+            self.ensure_in_not_paused()?;
+            if !self.beneficiaries.contains(&account_id) {
+                return Err(Error::AccountNotFound);
+            }
+            let beneficiary = self.beneficiaries.get(&account_id).unwrap();
+            Ok(beneficiary)
         }
     }
 
@@ -612,6 +629,61 @@ mod open_payroll {
             let contract_balance_before_payment = get_balance(contract.owner);
             let bob_balance_before_payment = get_balance(accounts.bob);
             set_sender(accounts.bob);
+            contract.claim_payment().unwrap();
+            assert!(get_balance(contract.owner) < contract_balance_before_payment);
+            assert!(get_balance(accounts.bob) > bob_balance_before_payment);
+        }
+
+        /// Test update storage claim
+        #[ink::test]
+        fn update_storage_claim() {
+            let accounts = default_accounts();
+            set_sender(accounts.alice);
+            let mut contract = create_contract(100_000_000u128);
+            contract
+                .add_or_update_beneficiary(accounts.bob, vec![100, 20])
+                .unwrap();
+            // advance 3 blocks so a payment will be claimable
+            advance_block();
+            advance_block();
+            advance_block();
+            let contract_balance_before_payment = get_balance(contract.owner);
+            let bob_balance_before_payment = get_balance(accounts.bob);
+            set_sender(accounts.bob);
+            contract.update_storage_claim(accounts.bob).unwrap();
+
+            let beneficiary_bob = contract.get_beneficiary(accounts.bob).unwrap();
+            assert!(get_balance(contract.owner) == contract_balance_before_payment);
+            assert!(get_balance(accounts.bob) == bob_balance_before_payment);
+            assert_eq!(beneficiary_bob.last_claimed_period_block, 2);
+            assert_eq!(beneficiary_bob.unclaimed_payments, 1200);
+        }
+
+        /// Test update storage and claim transfer
+        /// to test NoUnclaimedPayments error when no payments but unclaimed_payments <> 0
+        #[ink::test]
+        fn update_storage_claim_and_claim_transfer() {
+            let accounts = default_accounts();
+            set_sender(accounts.alice);
+            let mut contract = create_contract(100_000_000u128);
+            contract
+                .add_or_update_beneficiary(accounts.bob, vec![100, 20])
+                .unwrap();
+            // advance 3 blocks so a payment will be claimable
+            advance_block();
+            advance_block();
+            advance_block();
+            let contract_balance_before_payment = get_balance(contract.owner);
+            let bob_balance_before_payment = get_balance(accounts.bob);
+            set_sender(accounts.bob);
+            contract.update_storage_claim(accounts.bob).unwrap();
+
+            let beneficiary_bob = contract.get_beneficiary(accounts.bob).unwrap();
+            assert!(get_balance(contract.owner) == contract_balance_before_payment);
+            assert!(get_balance(accounts.bob) == bob_balance_before_payment);
+            assert_eq!(beneficiary_bob.last_claimed_period_block, 2);
+            assert_eq!(beneficiary_bob.unclaimed_payments, 1200);
+
             contract.claim_payment().unwrap();
             assert!(get_balance(contract.owner) < contract_balance_before_payment);
             assert!(get_balance(accounts.bob) > bob_balance_before_payment);
