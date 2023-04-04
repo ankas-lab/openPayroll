@@ -375,14 +375,10 @@ mod open_payroll {
             ink::env::test::set_account_balance::<ink::env::DefaultEnvironment>(account_id, balance)
         }
 
-        fn advance_block() {
-            ink::env::test::advance_block::<ink::env::DefaultEnvironment>();
-        }
-
-        fn advance_3_blocks() {
-            advance_block();
-            advance_block();
-            advance_block();
+        fn advance_n_blocks(n: u32) {
+            for _ in 0..n {
+                ink::env::test::advance_block::<ink::env::DefaultEnvironment>();
+            }
         }
 
         fn get_current_block() -> u32 {
@@ -604,7 +600,7 @@ mod open_payroll {
             let mut contract = create_contract(100_000_000u128);
             contract.pause().unwrap();
             assert_eq!(contract.is_paused(), true);
-            advance_block();
+            advance_n_blocks(1);
             contract.resume().unwrap();
             assert_eq!(contract.is_paused(), false);
             // check for the starting block to be the same
@@ -632,7 +628,7 @@ mod open_payroll {
                 .add_or_update_beneficiary(accounts.bob, vec![100, 20])
                 .unwrap();
             // advance 3 blocks so a payment will be claimable
-            advance_3_blocks();
+            advance_n_blocks(3);
 
             let contract_balance_before_payment = get_balance(contract.owner);
             let bob_balance_before_payment = get_balance(accounts.bob);
@@ -652,7 +648,7 @@ mod open_payroll {
                 .add_or_update_beneficiary(accounts.bob, vec![100, 20])
                 .unwrap();
             // advance 3 blocks so a payment will be claimable
-            advance_3_blocks();
+            advance_n_blocks(3);
 
             let contract_balance_before_payment = get_balance(contract.owner);
             let bob_balance_before_payment = get_balance(accounts.bob);
@@ -677,7 +673,7 @@ mod open_payroll {
                 .add_or_update_beneficiary(accounts.bob, vec![100, 20])
                 .unwrap();
             // advance 3 blocks so a payment will be claimable
-            advance_3_blocks();
+            advance_n_blocks(3);
 
             let contract_balance_before_payment = get_balance(contract.owner);
             let bob_balance_before_payment = get_balance(accounts.bob);
@@ -704,7 +700,7 @@ mod open_payroll {
                 .add_or_update_beneficiary(accounts.bob, vec![100, 20])
                 .unwrap();
             // advance 3 blocks so a payment will be claimable
-            advance_3_blocks();
+            advance_n_blocks(3);
 
             let res = contract.update_periodicity(10u32);
 
@@ -720,7 +716,7 @@ mod open_payroll {
                 .add_or_update_beneficiary(accounts.bob, vec![100, 20])
                 .unwrap();
             // advance 3 blocks so a payment will be claimable
-            advance_3_blocks();
+            advance_n_blocks(3);
 
             contract.update_storage_claim(accounts.bob).unwrap();
 
@@ -738,7 +734,7 @@ mod open_payroll {
                 .add_or_update_beneficiary(accounts.bob, vec![100, 20])
                 .unwrap();
             // advance 3 blocks so a payment will be claimable
-            advance_3_blocks();
+            advance_n_blocks(3);
 
             set_sender(accounts.bob);
             contract.claim_payment().unwrap();
@@ -758,7 +754,7 @@ mod open_payroll {
                 .add_or_update_beneficiary(accounts.bob, vec![100, 20])
                 .unwrap();
             // advance 3 blocks so a payment will be claimable
-            advance_3_blocks();
+            advance_n_blocks(3);
 
             let res = contract.update_base_payment(900);
 
@@ -774,7 +770,7 @@ mod open_payroll {
                 .add_or_update_beneficiary(accounts.bob, vec![100, 20])
                 .unwrap();
             // advance 3 blocks so a payment will be claimable
-            advance_3_blocks();
+            advance_n_blocks(3);
 
             set_sender(accounts.bob);
             contract.claim_payment().unwrap();
