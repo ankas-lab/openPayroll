@@ -218,9 +218,8 @@ mod open_payroll {
         }
 
         /// Get amount in storage without transferring the funds
+        #[ink(message)]
         pub fn get_amount_to_claim(&mut self, account_id: AccountId) -> Result<Balance, Error> {
-            self.ensure_in_not_paused()?;
-
             if !self.beneficiaries.contains(&account_id) {
                 return Err(Error::AccountNotFound);
             }
@@ -332,7 +331,6 @@ mod open_payroll {
         /// Get beneficiary only read
         #[ink(message)]
         pub fn get_beneficiary(&mut self, account_id: AccountId) -> Result<Beneficiary, Error> {
-            self.ensure_in_not_paused()?;
             if !self.beneficiaries.contains(&account_id) {
                 return Err(Error::AccountNotFound);
             }
