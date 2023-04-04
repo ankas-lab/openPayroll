@@ -200,20 +200,23 @@ mod open_payroll {
         /// Update claim amount in storage without transferring the funds
         #[ink(message)]
         pub fn update_storage_claim(&mut self, account_id: AccountId) -> Result<(), Error> {
-            let (mut beneficiary, total) = Self::get_amount_to_claim(self, account_id)?;
-
+            let total = Self::get_amount_to_claim(self, account_id)?;
+            let mut beneficiary = self.beneficiaries.get(&account_id).unwrap();
             // update into storage the unclaimed payments and the last claimed period
             beneficiary.unclaimed_payments = total;
-            beneficiary.last_claimed_period_block = self.env().block_number();
+
+            let current_block = self.env().block_number();
+            let claimed_period_block =
+                current_block - ((current_block - self.initial_block) % self.periodicity);
+
+            // get the block from the last period claimed
+            beneficiary.last_claimed_period_block = claimed_period_block;
 
             Ok(())
         }
 
         /// Get amount in storage without transferring the funds
-        pub fn get_amount_to_claim(
-            &mut self,
-            account_id: AccountId,
-        ) -> Result<(Beneficiary, Balance), Error> {
+        pub fn get_amount_to_claim(&mut self, account_id: AccountId) -> Result<Balance, Error> {
             self.ensure_in_not_paused()?;
 
             if !self.beneficiaries.contains(&account_id) {
@@ -244,7 +247,7 @@ mod open_payroll {
             let total_payment =
                 payment_per_period * unclaimed_periods as u128 + beneficiary.unclaimed_payments;
 
-            Ok((beneficiary, total_payment))
+            Ok(total_payment)
         }
 
         /// Claim payment for a single account id
@@ -254,7 +257,8 @@ mod open_payroll {
             let account_id = self.env().caller();
             let current_block = self.env().block_number();
 
-            let (beneficiary, total_payment) = Self::get_amount_to_claim(self, account_id)?;
+            let total_payment = Self::get_amount_to_claim(self, account_id)?;
+            let beneficiary = self.beneficiaries.get(&account_id).unwrap();
 
             let treasury_balance = self.env().balance();
             if total_payment > treasury_balance {
