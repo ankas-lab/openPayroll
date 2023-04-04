@@ -1,7 +1,9 @@
 #![cfg_attr(not(feature = "std"), no_std)]
+mod errors;
 
 #[ink::contract]
 mod open_payroll {
+    use crate::errors::Error;
     use ink::prelude::string::String;
     use ink::prelude::vec::Vec;
     use ink::storage::traits::StorageLayout;
@@ -38,25 +40,6 @@ mod open_payroll {
         paused_block_at: Option<u32>,
         /// The multipliers to apply to the base payment
         base_multipliers: Vec<String>,
-    }
-
-    #[derive(scale::Encode, scale::Decode, Eq, PartialEq, Debug, Clone)]
-    #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
-    pub enum Error {
-        // The caller is not the owner of the contract
-        NotOwner,
-        // The contract is paused
-        ContractIsPaused,
-        // The params are invalid
-        InvalidParams,
-        // The account is not found
-        AccountNotFound,
-        // The contract does not have enough balance to pay
-        NotEnoughBalanceInTreasury,
-        // The transfer failed
-        TransferFailed,
-        // The beneficiary has no unclaimed payments
-        NoUnclaimedPayments,
     }
 
     impl OpenPayroll {
@@ -177,7 +160,9 @@ mod open_payroll {
                 return Err(Error::InvalidParams);
             }
 
-            // TODO: Sync unclaimed payments here
+            //check if all payments are up to date
+            self.ensure_all_payments_uptodate()?;
+
             self.base_payment = base_payment;
 
             Ok(())
@@ -191,7 +176,9 @@ mod open_payroll {
                 return Err(Error::InvalidParams);
             }
 
-            // TODO: Sync unclaimed payments here
+            //check if all payments are up to date
+            self.ensure_all_payments_uptodate()?;
+
             self.periodicity = periodicity;
 
             Ok(())
@@ -214,6 +201,24 @@ mod open_payroll {
 
             self.beneficiaries.insert(account_id, &beneficiary);
 
+            Ok(())
+        }
+
+        /// Check if all payments up to date or storage unclaiumed_payments is up-to-date
+        ///
+        /// TODO: it would be better to return a vector of accounts that are not up to date ?
+        #[ink(message)]
+        pub fn ensure_all_payments_uptodate(&self) -> Result<(), Error> {
+            let current_block = self.env().block_number();
+
+            for account_id in self.beneficiaries_accounts.iter() {
+                let beneficiary = self.beneficiaries.get(account_id).unwrap();
+                let claimed_period_block =
+                    current_block - ((current_block - self.initial_block) % self.periodicity);
+                if claimed_period_block > beneficiary.last_claimed_period_block {
+                    return Err(Error::PaymentsNotUpToDate);
+                }
+            }
             Ok(())
         }
 
@@ -372,6 +377,12 @@ mod open_payroll {
 
         fn advance_block() {
             ink::env::test::advance_block::<ink::env::DefaultEnvironment>();
+        }
+
+        fn advance_3_blocks() {
+            advance_block();
+            advance_block();
+            advance_block();
         }
 
         fn get_current_block() -> u32 {
@@ -621,9 +632,8 @@ mod open_payroll {
                 .add_or_update_beneficiary(accounts.bob, vec![100, 20])
                 .unwrap();
             // advance 3 blocks so a payment will be claimable
-            advance_block();
-            advance_block();
-            advance_block();
+            advance_3_blocks();
+
             let contract_balance_before_payment = get_balance(contract.owner);
             let bob_balance_before_payment = get_balance(accounts.bob);
             set_sender(accounts.bob);
@@ -642,9 +652,8 @@ mod open_payroll {
                 .add_or_update_beneficiary(accounts.bob, vec![100, 20])
                 .unwrap();
             // advance 3 blocks so a payment will be claimable
-            advance_block();
-            advance_block();
-            advance_block();
+            advance_3_blocks();
+
             let contract_balance_before_payment = get_balance(contract.owner);
             let bob_balance_before_payment = get_balance(accounts.bob);
             set_sender(accounts.bob);
@@ -668,9 +677,8 @@ mod open_payroll {
                 .add_or_update_beneficiary(accounts.bob, vec![100, 20])
                 .unwrap();
             // advance 3 blocks so a payment will be claimable
-            advance_block();
-            advance_block();
-            advance_block();
+            advance_3_blocks();
+
             let contract_balance_before_payment = get_balance(contract.owner);
             let bob_balance_before_payment = get_balance(accounts.bob);
             set_sender(accounts.bob);
@@ -685,6 +693,96 @@ mod open_payroll {
             contract.claim_payment().unwrap();
             assert!(get_balance(contract.owner) < contract_balance_before_payment);
             assert!(get_balance(accounts.bob) > bob_balance_before_payment);
+        }
+
+        #[ink::test]
+        fn update_periodicity_without_all_payments_updated() {
+            let accounts = default_accounts();
+            set_sender(accounts.alice);
+            let mut contract = create_contract(100_000_000u128);
+            contract
+                .add_or_update_beneficiary(accounts.bob, vec![100, 20])
+                .unwrap();
+            // advance 3 blocks so a payment will be claimable
+            advance_3_blocks();
+
+            let res = contract.update_periodicity(10u32);
+
+            assert!(matches!(res, Err(Error::PaymentsNotUpToDate)));
+        }
+
+        #[ink::test]
+        fn update_periodicity_with_all_payments_updated() {
+            let accounts = default_accounts();
+            set_sender(accounts.alice);
+            let mut contract = create_contract(100_000_000u128);
+            contract
+                .add_or_update_beneficiary(accounts.bob, vec![100, 20])
+                .unwrap();
+            // advance 3 blocks so a payment will be claimable
+            advance_3_blocks();
+
+            contract.update_storage_claim(accounts.bob).unwrap();
+
+            let res = contract.update_periodicity(10u32);
+
+            assert!(matches!(res, Ok(())));
+        }
+
+        #[ink::test]
+        fn update_periodicity_with_all_payments_claimed() {
+            let accounts = default_accounts();
+            set_sender(accounts.alice);
+            let mut contract = create_contract(100_000_000u128);
+            contract
+                .add_or_update_beneficiary(accounts.bob, vec![100, 20])
+                .unwrap();
+            // advance 3 blocks so a payment will be claimable
+            advance_3_blocks();
+
+            set_sender(accounts.bob);
+            contract.claim_payment().unwrap();
+
+            set_sender(accounts.alice);
+            let res = contract.update_periodicity(10u32);
+
+            assert_eq!(res, Ok(()));
+        }
+
+        #[ink::test]
+        fn update_base_payment_without_all_payments_updated() {
+            let accounts = default_accounts();
+            set_sender(accounts.alice);
+            let mut contract = create_contract(100_000_000u128);
+            contract
+                .add_or_update_beneficiary(accounts.bob, vec![100, 20])
+                .unwrap();
+            // advance 3 blocks so a payment will be claimable
+            advance_3_blocks();
+
+            let res = contract.update_base_payment(900);
+
+            assert!(matches!(res, Err(Error::PaymentsNotUpToDate)));
+        }
+
+        #[ink::test]
+        fn update_base_payment_with_all_payments_claimed() {
+            let accounts = default_accounts();
+            set_sender(accounts.alice);
+            let mut contract = create_contract(100_000_000u128);
+            contract
+                .add_or_update_beneficiary(accounts.bob, vec![100, 20])
+                .unwrap();
+            // advance 3 blocks so a payment will be claimable
+            advance_3_blocks();
+
+            set_sender(accounts.bob);
+            contract.claim_payment().unwrap();
+
+            set_sender(accounts.alice);
+            let res = contract.update_base_payment(900);
+
+            assert_eq!(res, Ok(()));
         }
     }
 }
