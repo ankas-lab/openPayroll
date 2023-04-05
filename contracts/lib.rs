@@ -22,6 +22,13 @@ mod open_payroll {
         last_claimed_period_block: BlockNumber,
     }
 
+    #[derive(scale::Encode, scale::Decode, Eq, PartialEq, Debug, Clone)]
+    #[cfg_attr(feature = "std", derive(scale_info::TypeInfo, StorageLayout))]
+    pub struct ClaimsInPeriod {
+        period: u32,
+        total_claims: u32,
+    }
+
     #[ink(storage)]
     pub struct OpenPayroll {
         /// The accountId of the creator of the contract, who has 'priviliged' access to do administrative tasks
@@ -40,6 +47,8 @@ mod open_payroll {
         paused_block_at: Option<u32>,
         /// The multipliers to apply to the base payment
         base_multipliers: Vec<String>,
+        /// Current claims in period
+        claims_in_period: ClaimsInPeriod,
     }
 
     impl OpenPayroll {
@@ -57,6 +66,12 @@ mod open_payroll {
             }
 
             let beneficiaries = Mapping::default();
+
+            let claims_in_period = ClaimsInPeriod {
+                period: 0,
+                total_claims: 0,
+            };
+
             Ok(Self {
                 owner,
                 beneficiaries,
@@ -66,6 +81,7 @@ mod open_payroll {
                 paused_block_at: None,
                 beneficiaries_accounts: Vec::default(),
                 base_multipliers,
+                claims_in_period,
             })
         }
 
@@ -161,8 +177,8 @@ mod open_payroll {
             }
 
             //check if all payments are up to date
-            self.ensure_all_payments_uptodate()?;
-
+            //self.ensure_all_payments_uptodate()?;
+            self.ensure_all_claimed_in_period()?;
             self.base_payment = base_payment;
 
             Ok(())
@@ -177,8 +193,8 @@ mod open_payroll {
             }
 
             //check if all payments are up to date
-            self.ensure_all_payments_uptodate()?;
-
+            //self.ensure_all_payments_uptodate()?;
+            self.ensure_all_claimed_in_period()?;
             self.periodicity = periodicity;
 
             Ok(())
@@ -264,11 +280,15 @@ mod open_payroll {
         #[ink(message)]
         pub fn claim_payment(&mut self) -> Result<(), Error> {
             self.ensure_in_not_paused()?;
+            //TODO: Add account_id as parameter
             let account_id = self.env().caller();
             let current_block = self.env().block_number();
 
+            //TODO:
             let total_payment = Self::get_amount_to_claim(self, account_id)?;
-            let beneficiary = self.beneficiaries.get(&account_id).unwrap();
+            let beneficiary = self.beneficiaries.get(&account_id).expect(
+                "This will never panic because we check it in the function get_amount_to_claim",
+            );
 
             let treasury_balance = self.env().balance();
             if total_payment > treasury_balance {
@@ -280,8 +300,10 @@ mod open_payroll {
                 return Err(Error::TransferFailed);
             }
 
-            let claimed_period_block =
+            let claiming_period_block =
                 current_block - ((current_block - self.initial_block) % self.periodicity);
+
+            self.update_claims_in_period(claiming_period_block);
 
             self.beneficiaries.insert(
                 account_id,
@@ -289,11 +311,38 @@ mod open_payroll {
                     account_id,
                     multipliers: beneficiary.multipliers,
                     unclaimed_payments: 0,
-                    last_claimed_period_block: claimed_period_block,
+                    last_claimed_period_block: claiming_period_block,
                 },
             );
 
             Ok(())
+        }
+
+        pub fn update_claims_in_period(&mut self, claiming_period_block: BlockNumber) {
+            if claiming_period_block == self.claims_in_period.period {
+                // Updates current claims in period
+                self.claims_in_period.total_claims += 1;
+            } else {
+                // Reset the claims in period
+                self.claims_in_period.period = claiming_period_block;
+                self.claims_in_period.total_claims = 1;
+            }
+        }
+
+        //TODO Add tests
+        fn ensure_all_claimed_in_period(&mut self) -> Result<(), Error> {
+            let current_block = self.env().block_number();
+            let claiming_period_block =
+                current_block - ((current_block - self.initial_block) % self.periodicity);
+
+            let claims_in_period = self.claims_in_period.clone();
+            if claiming_period_block == claims_in_period.period
+                && claims_in_period.total_claims == self.beneficiaries_accounts.len() as u32
+            {
+                return Ok(());
+            }
+
+            return Err(Error::NotAllClaimedInPeriod);
         }
 
         /// Calculate outstanding payments for the entire DAO -- this call can be expensive!!!

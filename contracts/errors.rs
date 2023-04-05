@@ -17,4 +17,6 @@ pub enum Error {
     NoUnclaimedPayments,
     // Some of the beneficiaries have unclaimed payments
     PaymentsNotUpToDate,
+    // Not all the payments are claimed in the last period
+    NotAllClaimedInPeriod,
 }
