@@ -9,7 +9,6 @@ mod open_payroll {
     use ink::storage::traits::StorageLayout;
     use ink::storage::Mapping;
 
-    // TODO: Review frame arbitrary precission numbers primitives
     type Multiplier = u128;
 
     #[derive(scale::Encode, scale::Decode, Eq, PartialEq, Debug, Clone)]
@@ -17,8 +16,6 @@ mod open_payroll {
     pub struct Beneficiary {
         account_id: AccountId,
         multipliers: Vec<Multiplier>,
-        unclaimed_payments: Balance,
-        // TODO: Maybe this needs to be an option?
         last_claimed_period_block: BlockNumber,
     }
 
@@ -128,7 +125,6 @@ mod open_payroll {
                     &Beneficiary {
                         account_id,
                         multipliers,
-                        unclaimed_payments: beneficiary.unclaimed_payments,
                         last_claimed_period_block: beneficiary.last_claimed_period_block,
                     },
                 );
@@ -139,7 +135,6 @@ mod open_payroll {
                     &Beneficiary {
                         account_id,
                         multipliers,
-                        unclaimed_payments: 0,
                         last_claimed_period_block: 0,
                     },
                 );
@@ -200,26 +195,6 @@ mod open_payroll {
             Ok(())
         }
 
-        /// Update claim amount in storage without transferring the funds
-        #[ink(message)]
-        pub fn update_storage_claim(&mut self, account_id: AccountId) -> Result<(), Error> {
-            let total = Self::get_amount_to_claim(self, account_id)?;
-            let mut beneficiary = self.beneficiaries.get(&account_id).unwrap();
-            // update into storage the unclaimed payments and the last claimed period
-            beneficiary.unclaimed_payments = total;
-
-            let current_block = self.env().block_number();
-            let claimed_period_block =
-                current_block - ((current_block - self.initial_block) % self.periodicity);
-
-            // get the block from the last period claimed
-            beneficiary.last_claimed_period_block = claimed_period_block;
-
-            self.beneficiaries.insert(account_id, &beneficiary);
-
-            Ok(())
-        }
-
         /// Check if all payments up to date or storage unclaiumed_payments is up-to-date
         ///
         /// TODO: it would be better to return a vector of accounts that are not up to date ?
@@ -254,10 +229,6 @@ mod open_payroll {
             // Calculates the number of payments that are due based on the elapsed blocks
             let unclaimed_periods: u128 = (blocks_since_last_payment / self.periodicity).into();
             if unclaimed_periods == 0 {
-                if beneficiary.unclaimed_payments != 0 {
-                    return Ok(beneficiary.unclaimed_payments);
-                }
-
                 return Err(Error::NoUnclaimedPayments);
             }
 
@@ -270,8 +241,7 @@ mod open_payroll {
             };
 
             let payment_per_period: Balance = final_multiplier * self.base_payment / 100;
-            let total_payment =
-                payment_per_period * unclaimed_periods as u128 + beneficiary.unclaimed_payments;
+            let total_payment = payment_per_period * unclaimed_periods as u128;
 
             Ok(total_payment)
         }
@@ -294,10 +264,6 @@ mod open_payroll {
                 return Err(Error::NotEnoughBalanceInTreasury);
             }
             ink::env::debug_println!("total_payment: {}", total_payment);
-            // Add the transfer checked if its failed
-            if let Err(_) = self.env().transfer(account_id, total_payment) {
-                return Err(Error::TransferFailed);
-            }
 
             let claiming_period_block =
                 current_block - ((current_block - self.initial_block) % self.periodicity);
@@ -309,10 +275,14 @@ mod open_payroll {
                 &Beneficiary {
                     account_id,
                     multipliers: beneficiary.multipliers,
-                    unclaimed_payments: 0,
                     last_claimed_period_block: claiming_period_block,
                 },
             );
+
+            // Add the transfer checked if its failed
+            if let Err(_) = self.env().transfer(account_id, total_payment) {
+                return Err(Error::TransferFailed);
+            }
 
             Ok(())
         }
@@ -681,59 +651,6 @@ mod open_payroll {
             let contract_balance_before_payment = get_balance(contract.owner);
             let bob_balance_before_payment = get_balance(accounts.bob);
             set_sender(accounts.bob);
-            contract.claim_payment(accounts.bob).unwrap();
-            assert!(get_balance(contract.owner) < contract_balance_before_payment);
-            assert!(get_balance(accounts.bob) > bob_balance_before_payment);
-        }
-
-        /// Test update storage claim
-        #[ink::test]
-        fn update_storage_claim() {
-            let accounts = default_accounts();
-            set_sender(accounts.alice);
-            let mut contract = create_contract(100_000_000u128);
-            contract
-                .add_or_update_beneficiary(accounts.bob, vec![100, 20])
-                .unwrap();
-            // advance 3 blocks so a payment will be claimable
-            advance_n_blocks(3);
-
-            let contract_balance_before_payment = get_balance(contract.owner);
-            let bob_balance_before_payment = get_balance(accounts.bob);
-            set_sender(accounts.bob);
-            contract.update_storage_claim(accounts.bob).unwrap();
-
-            let beneficiary_bob = contract.get_beneficiary(accounts.bob).unwrap();
-            assert!(get_balance(contract.owner) == contract_balance_before_payment);
-            assert!(get_balance(accounts.bob) == bob_balance_before_payment);
-            assert_eq!(beneficiary_bob.last_claimed_period_block, 2);
-            assert_eq!(beneficiary_bob.unclaimed_payments, 1200);
-        }
-
-        /// Test update storage and claim transfer
-        /// to test NoUnclaimedPayments error when no payments but unclaimed_payments <> 0
-        #[ink::test]
-        fn update_storage_claim_and_claim_transfer() {
-            let accounts = default_accounts();
-            set_sender(accounts.alice);
-            let mut contract = create_contract(100_000_000u128);
-            contract
-                .add_or_update_beneficiary(accounts.bob, vec![100, 20])
-                .unwrap();
-            // advance 3 blocks so a payment will be claimable
-            advance_n_blocks(3);
-
-            let contract_balance_before_payment = get_balance(contract.owner);
-            let bob_balance_before_payment = get_balance(accounts.bob);
-            set_sender(accounts.bob);
-            contract.update_storage_claim(accounts.bob).unwrap();
-
-            let beneficiary_bob = contract.get_beneficiary(accounts.bob).unwrap();
-            assert!(get_balance(contract.owner) == contract_balance_before_payment);
-            assert!(get_balance(accounts.bob) == bob_balance_before_payment);
-            assert_eq!(beneficiary_bob.last_claimed_period_block, 2);
-            assert_eq!(beneficiary_bob.unclaimed_payments, 1200);
-
             contract.claim_payment(accounts.bob).unwrap();
             assert!(get_balance(contract.owner) < contract_balance_before_payment);
             assert!(get_balance(accounts.bob) > bob_balance_before_payment);
