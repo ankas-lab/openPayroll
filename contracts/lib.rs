@@ -92,6 +92,7 @@ mod open_payroll {
         }
 
         /// Add a new beneficiary or modify the multiplier of an existing one.
+        /// TODO check multipliers integrity and validate them
         #[ink(message)]
         pub fn add_or_update_beneficiary(
             &mut self,
