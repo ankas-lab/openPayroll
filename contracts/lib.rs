@@ -245,7 +245,8 @@ mod open_payroll {
             };
 
             let payment_per_period: Balance = final_multiplier * self.base_payment / 100;
-            let total_payment = payment_per_period * unclaimed_periods as u128;
+            let total_payment =
+                payment_per_period * unclaimed_periods as u128 + beneficiary.unclaimed_payments;
 
             Ok(total_payment)
         }
@@ -261,7 +262,6 @@ mod open_payroll {
 
             let current_block = self.env().block_number();
 
-            //TODO:
             let total_payment = Self::get_amount_to_claim(self, account_id)?;
             if amount > total_payment {
                 return Err(Error::InvalidParams); //TODO: create a new error
@@ -279,7 +279,10 @@ mod open_payroll {
             let claiming_period_block =
                 current_block - ((current_block - self.initial_block) % self.periodicity);
 
-            self.update_claims_in_period(claiming_period_block);
+            // If the beneficiary has not claimed anything in the current period
+            if beneficiary.last_claimed_period_block != claiming_period_block {
+                self.update_claims_in_period(claiming_period_block);
+            }
 
             self.beneficiaries.insert(
                 account_id,
@@ -291,9 +294,11 @@ mod open_payroll {
                 },
             );
 
-            // Add the transfer checked if its failed
-            if let Err(_) = self.env().transfer(account_id, amount) {
-                return Err(Error::TransferFailed);
+            // Transfer the amount to the beneficiary if amount > 0
+            if amount > 0 {
+                if let Err(_) = self.env().transfer(account_id, amount) {
+                    return Err(Error::TransferFailed);
+                }
             }
 
             Ok(())
