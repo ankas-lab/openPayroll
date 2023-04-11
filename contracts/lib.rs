@@ -16,6 +16,7 @@ mod open_payroll {
     pub struct Beneficiary {
         account_id: AccountId,
         multipliers: Vec<Multiplier>,
+        unclaimed_payments: Balance,
         last_claimed_period_block: BlockNumber,
     }
 
@@ -114,6 +115,7 @@ mod open_payroll {
             self.ensure_owner()?;
 
             // Check that the multipliers are valid and have the same length as the base_multipliers
+            // TODO: this may be shorter than the base_multipliers
             if multipliers.len() != self.base_multipliers.len() {
                 return Err(Error::InvalidParams);
             }
@@ -125,6 +127,7 @@ mod open_payroll {
                     &Beneficiary {
                         account_id,
                         multipliers,
+                        unclaimed_payments: beneficiary.unclaimed_payments,
                         last_claimed_period_block: beneficiary.last_claimed_period_block,
                     },
                 );
@@ -135,6 +138,7 @@ mod open_payroll {
                     &Beneficiary {
                         account_id,
                         multipliers,
+                        unclaimed_payments: 0,
                         last_claimed_period_block: 0,
                     },
                 );
@@ -248,22 +252,29 @@ mod open_payroll {
 
         /// Claim payment for a single account id
         #[ink(message)]
-        pub fn claim_payment(&mut self, account_id: AccountId) -> Result<(), Error> {
+        pub fn claim_payment(
+            &mut self,
+            account_id: AccountId,
+            amount: Balance,
+        ) -> Result<(), Error> {
             self.ensure_in_not_paused()?;
 
             let current_block = self.env().block_number();
 
             //TODO:
             let total_payment = Self::get_amount_to_claim(self, account_id)?;
+            if amount > total_payment {
+                return Err(Error::InvalidParams); //TODO: create a new error
+            }
+
             let beneficiary = self.beneficiaries.get(&account_id).expect(
                 "This will never panic because we check it in the function get_amount_to_claim",
             );
 
             let treasury_balance = self.env().balance();
-            if total_payment > treasury_balance {
+            if amount > treasury_balance {
                 return Err(Error::NotEnoughBalanceInTreasury);
             }
-            ink::env::debug_println!("total_payment: {}", total_payment);
 
             let claiming_period_block =
                 current_block - ((current_block - self.initial_block) % self.periodicity);
@@ -275,12 +286,13 @@ mod open_payroll {
                 &Beneficiary {
                     account_id,
                     multipliers: beneficiary.multipliers,
+                    unclaimed_payments: total_payment - amount,
                     last_claimed_period_block: claiming_period_block,
                 },
             );
 
             // Add the transfer checked if its failed
-            if let Err(_) = self.env().transfer(account_id, total_payment) {
+            if let Err(_) = self.env().transfer(account_id, amount) {
                 return Err(Error::TransferFailed);
             }
 
@@ -651,7 +663,11 @@ mod open_payroll {
             let contract_balance_before_payment = get_balance(contract.owner);
             let bob_balance_before_payment = get_balance(accounts.bob);
             set_sender(accounts.bob);
-            contract.claim_payment(accounts.bob).unwrap();
+
+            let amount_to_claim = contract.get_amount_to_claim(accounts.bob).unwrap();
+            contract
+                .claim_payment(accounts.bob, amount_to_claim)
+                .unwrap();
             assert!(get_balance(contract.owner) < contract_balance_before_payment);
             assert!(get_balance(accounts.bob) > bob_balance_before_payment);
         }
@@ -702,7 +718,11 @@ mod open_payroll {
             advance_n_blocks(3);
 
             set_sender(accounts.bob);
-            contract.claim_payment(accounts.bob).unwrap();
+
+            let amount_to_claim = contract.get_amount_to_claim(accounts.bob).unwrap();
+            contract
+                .claim_payment(accounts.bob, amount_to_claim)
+                .unwrap();
 
             set_sender(accounts.alice);
             let res = contract.update_periodicity(10u32);
@@ -738,7 +758,10 @@ mod open_payroll {
             advance_n_blocks(3);
 
             set_sender(accounts.bob);
-            contract.claim_payment(accounts.bob).unwrap();
+            let amount_to_claim = contract.get_amount_to_claim(accounts.bob).unwrap();
+            contract
+                .claim_payment(accounts.bob, amount_to_claim)
+                .unwrap();
 
             set_sender(accounts.alice);
             let res = contract.update_base_payment(900);
