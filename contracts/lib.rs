@@ -264,7 +264,7 @@ mod open_payroll {
 
             let total_payment = Self::get_amount_to_claim(self, account_id)?;
             if amount > total_payment {
-                return Err(Error::InvalidParams); //TODO: create a new error
+                return Err(Error::ClaimedAmountIsBiggerThanAvailable);
             }
 
             let beneficiary = self.beneficiaries.get(&account_id).expect(
@@ -677,6 +677,73 @@ mod open_payroll {
             assert!(get_balance(accounts.bob) > bob_balance_before_payment);
         }
 
+        /// Test claiming a payment
+        #[ink::test]
+        fn claim_parcial_payment() {
+            let accounts = default_accounts();
+            let total_amount = 100_000_000u128;
+            let total_not_claimed = 10;
+            set_sender(accounts.alice);
+            let mut contract = create_contract(total_amount);
+            contract
+                .add_or_update_beneficiary(accounts.bob, vec![100, 20])
+                .unwrap();
+
+            // advance 3 blocks so a payment will be claimable
+            advance_n_blocks(3);
+
+            let bob_balance_before_payment = get_balance(accounts.bob);
+            set_sender(accounts.bob);
+
+            let amount_to_claim = contract.get_amount_to_claim(accounts.bob).unwrap();
+            contract
+                .claim_payment(accounts.bob, amount_to_claim - total_not_claimed)
+                .unwrap();
+            assert!(
+                get_balance(contract.owner) == total_amount - amount_to_claim + total_not_claimed
+            );
+            assert!(
+                get_balance(accounts.bob)
+                    == bob_balance_before_payment + amount_to_claim - total_not_claimed
+            );
+            assert!(
+                contract
+                    .beneficiaries
+                    .get(accounts.bob)
+                    .unwrap()
+                    .unclaimed_payments
+                    == total_not_claimed
+            );
+        }
+
+        /// Test claiming a payment
+        #[ink::test]
+        fn claim_more_payment() {
+            let accounts = default_accounts();
+            let total_amount = 100_000_000u128;
+            set_sender(accounts.alice);
+            let mut contract = create_contract(total_amount);
+            contract
+                .add_or_update_beneficiary(accounts.bob, vec![100, 20])
+                .unwrap();
+
+            // advance 3 blocks so a payment will be claimable
+            advance_n_blocks(3);
+
+            let bob_balance_before_payment = get_balance(accounts.bob);
+            set_sender(accounts.bob);
+
+            let amount_to_claim = contract.get_amount_to_claim(accounts.bob).unwrap();
+            let res = contract.claim_payment(accounts.bob, amount_to_claim + 1);
+
+            assert!(matches!(
+                res,
+                Err(Error::ClaimedAmountIsBiggerThanAvailable)
+            ));
+            assert!(get_balance(contract.owner) == total_amount);
+            assert!(get_balance(accounts.bob) == bob_balance_before_payment);
+        }
+
         #[ink::test]
         fn update_periodicity_without_all_payments_updated() {
             let accounts = default_accounts();
@@ -693,7 +760,7 @@ mod open_payroll {
             assert!(matches!(res, Err(Error::NotAllClaimedInPeriod)));
         }
 
-        /* #[ink::test]
+        #[ink::test]
         fn update_periodicity_with_all_payments_updated() {
             let accounts = default_accounts();
             set_sender(accounts.alice);
@@ -704,12 +771,13 @@ mod open_payroll {
             // advance 3 blocks so a payment will be claimable
             advance_n_blocks(3);
 
-            contract.update_storage_claim(accounts.bob).unwrap();
+            // When you claim a payment with 0 amount, it will calculate the amount to claim an set it to unclaim payments.
+            contract.claim_payment(accounts.bob, 0).unwrap();
 
             let res = contract.update_periodicity(10u32);
 
             assert!(matches!(res, Ok(())));
-        } */
+        }
 
         #[ink::test]
         fn update_periodicity_with_all_payments_claimed() {

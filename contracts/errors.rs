@@ -19,4 +19,6 @@ pub enum Error {
     PaymentsNotUpToDate,
     // Not all the payments are claimed in the last period
     NotAllClaimedInPeriod,
+    // The amount to claim is bigger than the available amount
+    ClaimedAmountIsBiggerThanAvailable,
 }
