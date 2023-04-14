@@ -55,8 +55,8 @@ mod open_payroll {
             periodicity: u32,
             base_payment: Balance,
             base_multipliers: Vec<String>,
-            initial_beneficiaries: Vec<AccountId>,
-            multipliers: Vec<Multiplier>,
+            initial_beneficiaries: Vec<Beneficiary>,
+            //multipliers: Vec<Beneficiary>,
         ) -> Result<Self, Error> {
             let initial_block_number = Self::env().block_number();
             let owner = Self::env().caller();
@@ -66,25 +66,23 @@ mod open_payroll {
                 return Err(Error::InvalidParams);
             }
 
-            // check the amount of multipliers with the amount of beneficiaries
-            let amount_beneficiaries_calculated = (multipliers.len() * 100)
-                .checked_div(initial_beneficiaries.len())
-                .unwrap_or_default();
-
-            if initial_beneficiaries.len() * 100 != amount_beneficiaries_calculated {
-                return Err(Error::InvalidParams);
-            }
-
             let mut beneficiaries = Mapping::default();
-            for account in initial_beneficiaries.iter() {
-                let individual_multpliers = multipliers[0..base_multipliers.len()].to_vec();
+            let mut accounts = Vec::new();
+            for beneficiary_data in initial_beneficiaries.iter() {
+                // TODO: is this check ok ? or only if multipliers are bigger than base_multipliers.len()
+                if beneficiary_data.multipliers.len() != base_multipliers.len() {
+                    return Err(Error::InvalidMultipliersLength);
+                }
+
                 let beneficiary = Beneficiary {
-                    account_id: *account,
-                    multipliers: individual_multpliers,
+                    account_id: beneficiary_data.account_id,
+                    multipliers: beneficiary_data.multipliers.clone(),
                     unclaimed_payments: 0,
                     last_claimed_period_block: initial_block_number,
                 };
-                beneficiaries.insert(*account, &beneficiary);
+
+                beneficiaries.insert(beneficiary_data.account_id, &beneficiary);
+                accounts.push(beneficiary_data.account_id);
             }
 
             let claims_in_period = ClaimsInPeriod {
@@ -99,7 +97,7 @@ mod open_payroll {
                 base_payment,
                 initial_block: initial_block_number,
                 paused_block_at: None,
-                beneficiaries_accounts: initial_beneficiaries,
+                beneficiaries_accounts: accounts,
                 base_multipliers,
                 claims_in_period,
             })
@@ -415,12 +413,23 @@ mod open_payroll {
             accounts: &DefaultAccounts<DefaultEnvironment>,
         ) -> OpenPayroll {
             set_balance(contract_id(), initial_balance);
+            let beneficiary_bob = Beneficiary {
+                account_id: accounts.bob,
+                multipliers: vec![100, 3],
+                unclaimed_payments: 0,
+                last_claimed_period_block: 0,
+            };
+            let beneficiary_charlie = Beneficiary {
+                account_id: accounts.charlie,
+                multipliers: vec![100, 3],
+                unclaimed_payments: 0,
+                last_claimed_period_block: 0,
+            };
             OpenPayroll::new(
                 2,
                 1000,
                 vec!["Seniority".to_string(), "Performance".to_string()],
-                vec![accounts.bob, accounts.charlie],
-                vec![100, 3, 100, 3],
+                vec![beneficiary_bob, beneficiary_charlie],
             )
             .expect("Cannot create contract")
         }
@@ -431,7 +440,6 @@ mod open_payroll {
                 2,
                 1000,
                 vec!["Seniority".to_string(), "Performance".to_string()],
-                vec![],
                 vec![],
             )
             .expect("Cannot create contract")
@@ -479,36 +487,81 @@ mod open_payroll {
         #[ink::test]
         fn create_contract_with_invalid_amount_of_multipliers() {
             let accounts = default_accounts();
+            let beneficiary_bob = Beneficiary {
+                account_id: accounts.bob,
+                multipliers: vec![100, 3],
+                unclaimed_payments: 0,
+                last_claimed_period_block: 0,
+            };
+            let beneficiary_charlie = Beneficiary {
+                account_id: accounts.charlie,
+                multipliers: vec![100],
+                unclaimed_payments: 0,
+                last_claimed_period_block: 0,
+            };
             let res = OpenPayroll::new(
                 2,
                 1000,
                 vec!["Seniority".to_string(), "Performance".to_string()],
-                vec![accounts.bob, accounts.charlie],
-                vec![100, 100, 3],
+                vec![beneficiary_bob, beneficiary_charlie],
             );
 
-            assert!(matches!(res, Err(Error::InvalidParams)));
+            assert!(matches!(res, Err(Error::InvalidMultipliersLength)));
 
+            let beneficiary_bob = Beneficiary {
+                account_id: accounts.bob,
+                multipliers: vec![100],
+                unclaimed_payments: 0,
+                last_claimed_period_block: 0,
+            };
+            let beneficiary_charlie = Beneficiary {
+                account_id: accounts.charlie,
+                multipliers: vec![100],
+                unclaimed_payments: 0,
+                last_claimed_period_block: 0,
+            };
             let res = OpenPayroll::new(
                 2,
                 1000,
                 vec!["Seniority".to_string(), "Performance".to_string()],
-                vec![accounts.bob, accounts.charlie],
-                vec![100, 100],
+                vec![beneficiary_bob, beneficiary_charlie],
             );
 
-            assert!(matches!(res, Err(Error::InvalidParams)));
+            assert!(matches!(res, Err(Error::InvalidMultipliersLength)));
 
+            let beneficiary_bob = Beneficiary {
+                account_id: accounts.bob,
+                multipliers: vec![],
+                unclaimed_payments: 0,
+                last_claimed_period_block: 0,
+            };
+            let beneficiary_charlie = Beneficiary {
+                account_id: accounts.charlie,
+                multipliers: vec![],
+                unclaimed_payments: 0,
+                last_claimed_period_block: 0,
+            };
             let res = OpenPayroll::new(
                 2,
                 1000,
                 vec!["Seniority".to_string(), "Performance".to_string()],
-                vec![accounts.bob, accounts.charlie],
-                vec![],
+                vec![beneficiary_bob, beneficiary_charlie],
             );
 
-            assert!(matches!(res, Err(Error::InvalidParams)));
+            assert!(matches!(res, Err(Error::InvalidMultipliersLength)));
 
+            let beneficiary_bob = Beneficiary {
+                account_id: accounts.bob,
+                multipliers: vec![10, 3, 3],
+                unclaimed_payments: 0,
+                last_claimed_period_block: 0,
+            };
+            let beneficiary_charlie = Beneficiary {
+                account_id: accounts.charlie,
+                multipliers: vec![10, 3],
+                unclaimed_payments: 0,
+                last_claimed_period_block: 0,
+            };
             let res = OpenPayroll::new(
                 2,
                 1000,
@@ -517,11 +570,10 @@ mod open_payroll {
                     "Performance".to_string(),
                     "Years_at_company".to_string(),
                 ],
-                vec![accounts.bob, accounts.charlie],
-                vec![1, 2, 3, 4, 5],
+                vec![beneficiary_bob, beneficiary_charlie],
             );
 
-            assert!(matches!(res, Err(Error::InvalidParams)));
+            assert!(matches!(res, Err(Error::InvalidMultipliersLength)));
         }
 
         /// Add a new beneficiary and check that it is added
