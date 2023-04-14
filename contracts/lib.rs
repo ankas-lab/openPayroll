@@ -56,7 +56,6 @@ mod open_payroll {
             base_payment: Balance,
             base_multipliers: Vec<String>,
             initial_beneficiaries: Vec<Beneficiary>,
-            //multipliers: Vec<Beneficiary>,
         ) -> Result<Self, Error> {
             let initial_block_number = Self::env().block_number();
             let owner = Self::env().caller();
