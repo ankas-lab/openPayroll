@@ -22,6 +22,13 @@ mod open_payroll {
 
     #[derive(scale::Encode, scale::Decode, Eq, PartialEq, Debug, Clone)]
     #[cfg_attr(feature = "std", derive(scale_info::TypeInfo, StorageLayout))]
+    pub struct InitialBeneficiary {
+        account_id: AccountId,
+        multipliers: Vec<Multiplier>,
+    }
+
+    #[derive(scale::Encode, scale::Decode, Eq, PartialEq, Debug, Clone)]
+    #[cfg_attr(feature = "std", derive(scale_info::TypeInfo, StorageLayout))]
     pub struct ClaimsInPeriod {
         period: u32,
         total_claims: u32,
@@ -55,7 +62,7 @@ mod open_payroll {
             periodicity: u32,
             base_payment: Balance,
             base_multipliers: Vec<String>,
-            initial_beneficiaries: Vec<Beneficiary>,
+            initial_beneficiaries: Vec<InitialBeneficiary>,
         ) -> Result<Self, Error> {
             let initial_block_number = Self::env().block_number();
             let owner = Self::env().caller();
@@ -412,17 +419,13 @@ mod open_payroll {
             accounts: &DefaultAccounts<DefaultEnvironment>,
         ) -> OpenPayroll {
             set_balance(contract_id(), initial_balance);
-            let beneficiary_bob = Beneficiary {
+            let beneficiary_bob = InitialBeneficiary {
                 account_id: accounts.bob,
                 multipliers: vec![100, 3],
-                unclaimed_payments: 0,
-                last_claimed_period_block: 0,
             };
-            let beneficiary_charlie = Beneficiary {
+            let beneficiary_charlie = InitialBeneficiary {
                 account_id: accounts.charlie,
                 multipliers: vec![100, 3],
-                unclaimed_payments: 0,
-                last_claimed_period_block: 0,
             };
             OpenPayroll::new(
                 2,
@@ -486,17 +489,13 @@ mod open_payroll {
         #[ink::test]
         fn create_contract_with_invalid_amount_of_multipliers() {
             let accounts = default_accounts();
-            let beneficiary_bob = Beneficiary {
+            let beneficiary_bob = InitialBeneficiary {
                 account_id: accounts.bob,
                 multipliers: vec![100, 3],
-                unclaimed_payments: 0,
-                last_claimed_period_block: 0,
             };
-            let beneficiary_charlie = Beneficiary {
+            let beneficiary_charlie = InitialBeneficiary {
                 account_id: accounts.charlie,
                 multipliers: vec![100],
-                unclaimed_payments: 0,
-                last_claimed_period_block: 0,
             };
             let res = OpenPayroll::new(
                 2,
@@ -507,17 +506,13 @@ mod open_payroll {
 
             assert!(matches!(res, Err(Error::InvalidMultipliersLength)));
 
-            let beneficiary_bob = Beneficiary {
+            let beneficiary_bob = InitialBeneficiary {
                 account_id: accounts.bob,
                 multipliers: vec![100],
-                unclaimed_payments: 0,
-                last_claimed_period_block: 0,
             };
-            let beneficiary_charlie = Beneficiary {
+            let beneficiary_charlie = InitialBeneficiary {
                 account_id: accounts.charlie,
                 multipliers: vec![100],
-                unclaimed_payments: 0,
-                last_claimed_period_block: 0,
             };
             let res = OpenPayroll::new(
                 2,
@@ -528,17 +523,13 @@ mod open_payroll {
 
             assert!(matches!(res, Err(Error::InvalidMultipliersLength)));
 
-            let beneficiary_bob = Beneficiary {
+            let beneficiary_bob = InitialBeneficiary {
                 account_id: accounts.bob,
                 multipliers: vec![],
-                unclaimed_payments: 0,
-                last_claimed_period_block: 0,
             };
-            let beneficiary_charlie = Beneficiary {
+            let beneficiary_charlie = InitialBeneficiary {
                 account_id: accounts.charlie,
                 multipliers: vec![],
-                unclaimed_payments: 0,
-                last_claimed_period_block: 0,
             };
             let res = OpenPayroll::new(
                 2,
@@ -549,17 +540,13 @@ mod open_payroll {
 
             assert!(matches!(res, Err(Error::InvalidMultipliersLength)));
 
-            let beneficiary_bob = Beneficiary {
+            let beneficiary_bob = InitialBeneficiary {
                 account_id: accounts.bob,
                 multipliers: vec![10, 3, 3],
-                unclaimed_payments: 0,
-                last_claimed_period_block: 0,
             };
-            let beneficiary_charlie = Beneficiary {
+            let beneficiary_charlie = InitialBeneficiary {
                 account_id: accounts.charlie,
                 multipliers: vec![10, 3],
-                unclaimed_payments: 0,
-                last_claimed_period_block: 0,
             };
             let res = OpenPayroll::new(
                 2,
