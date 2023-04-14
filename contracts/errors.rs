@@ -21,4 +21,6 @@ pub enum Error {
     NotAllClaimedInPeriod,
     // The amount to claim is bigger than the available amount
     ClaimedAmountIsBiggerThanAvailable,
+    // The amount of multipliers per Beneficiary is not equal to the amount of periods
+    InvalidMultipliersLength,
 }

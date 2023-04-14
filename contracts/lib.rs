@@ -22,6 +22,13 @@ mod open_payroll {
 
     #[derive(scale::Encode, scale::Decode, Eq, PartialEq, Debug, Clone)]
     #[cfg_attr(feature = "std", derive(scale_info::TypeInfo, StorageLayout))]
+    pub struct InitialBeneficiary {
+        account_id: AccountId,
+        multipliers: Vec<Multiplier>,
+    }
+
+    #[derive(scale::Encode, scale::Decode, Eq, PartialEq, Debug, Clone)]
+    #[cfg_attr(feature = "std", derive(scale_info::TypeInfo, StorageLayout))]
     pub struct ClaimsInPeriod {
         period: u32,
         total_claims: u32,
@@ -55,7 +62,9 @@ mod open_payroll {
             periodicity: u32,
             base_payment: Balance,
             base_multipliers: Vec<String>,
+            initial_beneficiaries: Vec<InitialBeneficiary>,
         ) -> Result<Self, Error> {
+            let initial_block_number = Self::env().block_number();
             let owner = Self::env().caller();
             // TODO: move this to a parameter
 
@@ -63,7 +72,24 @@ mod open_payroll {
                 return Err(Error::InvalidParams);
             }
 
-            let beneficiaries = Mapping::default();
+            let mut beneficiaries = Mapping::default();
+            let mut accounts = Vec::new();
+            for beneficiary_data in initial_beneficiaries.iter() {
+                // TODO: is this check ok ? or only if multipliers are bigger than base_multipliers.len()
+                if beneficiary_data.multipliers.len() != base_multipliers.len() {
+                    return Err(Error::InvalidMultipliersLength);
+                }
+
+                let beneficiary = Beneficiary {
+                    account_id: beneficiary_data.account_id,
+                    multipliers: beneficiary_data.multipliers.clone(),
+                    unclaimed_payments: 0,
+                    last_claimed_period_block: initial_block_number,
+                };
+
+                beneficiaries.insert(beneficiary_data.account_id, &beneficiary);
+                accounts.push(beneficiary_data.account_id);
+            }
 
             let claims_in_period = ClaimsInPeriod {
                 period: 0,
@@ -75,9 +101,9 @@ mod open_payroll {
                 beneficiaries,
                 periodicity,
                 base_payment,
-                initial_block: Self::env().block_number(),
+                initial_block: initial_block_number,
                 paused_block_at: None,
-                beneficiaries_accounts: Vec::default(),
+                beneficiaries_accounts: accounts,
                 base_multipliers,
                 claims_in_period,
             })
@@ -315,15 +341,17 @@ mod open_payroll {
             }
         }
 
-        //TODO Add tests
         fn ensure_all_claimed_in_period(&mut self) -> Result<(), Error> {
             let current_block = self.env().block_number();
             let claiming_period_block =
                 current_block - ((current_block - self.initial_block) % self.periodicity);
 
             let claims_in_period = self.claims_in_period.clone();
-            if claiming_period_block == claims_in_period.period
-                && claims_in_period.total_claims == self.beneficiaries_accounts.len() as u32
+
+            if (claiming_period_block == claims_in_period.period
+                && claims_in_period.total_claims == self.beneficiaries_accounts.len() as u32)
+                || claiming_period_block == 0
+            // initial period in intial block noone can claim
             {
                 return Ok(());
             }
@@ -381,15 +409,40 @@ mod open_payroll {
 
     #[cfg(test)]
     mod tests {
+        use ink::env::{test::DefaultAccounts, DefaultEnvironment};
+
         use super::*;
 
         // UTILITY FUNCTIONS TO MAKE TESTING EASIER
-        fn create_contract(initial_balance: Balance) -> OpenPayroll {
+        fn create_contract(
+            initial_balance: Balance,
+            accounts: &DefaultAccounts<DefaultEnvironment>,
+        ) -> OpenPayroll {
+            set_balance(contract_id(), initial_balance);
+            let beneficiary_bob = InitialBeneficiary {
+                account_id: accounts.bob,
+                multipliers: vec![100, 3],
+            };
+            let beneficiary_charlie = InitialBeneficiary {
+                account_id: accounts.charlie,
+                multipliers: vec![100, 3],
+            };
+            OpenPayroll::new(
+                2,
+                1000,
+                vec!["Seniority".to_string(), "Performance".to_string()],
+                vec![beneficiary_bob, beneficiary_charlie],
+            )
+            .expect("Cannot create contract")
+        }
+
+        fn create_contract_with_no_beneficiaries(initial_balance: Balance) -> OpenPayroll {
             set_balance(contract_id(), initial_balance);
             OpenPayroll::new(
                 2,
                 1000,
                 vec!["Seniority".to_string(), "Performance".to_string()],
+                vec![],
             )
             .expect("Cannot create contract")
         }
@@ -430,7 +483,83 @@ mod open_payroll {
         fn default_works() {
             let accounts = default_accounts();
             set_sender(accounts.alice);
-            create_contract(100_000_000u128)
+            create_contract(100_000_000u128, &accounts)
+        }
+
+        #[ink::test]
+        fn create_contract_with_invalid_amount_of_multipliers() {
+            let accounts = default_accounts();
+            let beneficiary_bob = InitialBeneficiary {
+                account_id: accounts.bob,
+                multipliers: vec![100, 3],
+            };
+            let beneficiary_charlie = InitialBeneficiary {
+                account_id: accounts.charlie,
+                multipliers: vec![100],
+            };
+            let res = OpenPayroll::new(
+                2,
+                1000,
+                vec!["Seniority".to_string(), "Performance".to_string()],
+                vec![beneficiary_bob, beneficiary_charlie],
+            );
+
+            assert!(matches!(res, Err(Error::InvalidMultipliersLength)));
+
+            let beneficiary_bob = InitialBeneficiary {
+                account_id: accounts.bob,
+                multipliers: vec![100],
+            };
+            let beneficiary_charlie = InitialBeneficiary {
+                account_id: accounts.charlie,
+                multipliers: vec![100],
+            };
+            let res = OpenPayroll::new(
+                2,
+                1000,
+                vec!["Seniority".to_string(), "Performance".to_string()],
+                vec![beneficiary_bob, beneficiary_charlie],
+            );
+
+            assert!(matches!(res, Err(Error::InvalidMultipliersLength)));
+
+            let beneficiary_bob = InitialBeneficiary {
+                account_id: accounts.bob,
+                multipliers: vec![],
+            };
+            let beneficiary_charlie = InitialBeneficiary {
+                account_id: accounts.charlie,
+                multipliers: vec![],
+            };
+            let res = OpenPayroll::new(
+                2,
+                1000,
+                vec!["Seniority".to_string(), "Performance".to_string()],
+                vec![beneficiary_bob, beneficiary_charlie],
+            );
+
+            assert!(matches!(res, Err(Error::InvalidMultipliersLength)));
+
+            let beneficiary_bob = InitialBeneficiary {
+                account_id: accounts.bob,
+                multipliers: vec![10, 3, 3],
+            };
+            let beneficiary_charlie = InitialBeneficiary {
+                account_id: accounts.charlie,
+                multipliers: vec![10, 3],
+            };
+            let res = OpenPayroll::new(
+                2,
+                1000,
+                vec![
+                    "Seniority".to_string(),
+                    "Performance".to_string(),
+                    "Years_at_company".to_string(),
+                ],
+                vec![beneficiary_bob, beneficiary_charlie],
+            );
+
+            assert!(matches!(res, Err(Error::InvalidMultipliersLength)));
         }
 
         /// Add a new beneficiary and check that it is added
@@ -438,7 +567,7 @@ mod open_payroll {
         fn add_beneficiary() {
             let accounts = default_accounts();
             set_sender(accounts.alice);
-            let mut contract = create_contract(100_000_000u128);
+            let mut contract = create_contract_with_no_beneficiaries(100_000_000u128);
             contract
                 .add_or_update_beneficiary(accounts.bob, vec![200, 100])
                 .unwrap();
@@ -473,7 +602,7 @@ mod open_payroll {
         fn add_beneficiary_without_access() {
             let accounts = default_accounts();
             set_sender(accounts.alice);
-            let mut contract = create_contract(100_000_000u128);
+            let mut contract = create_contract_with_no_beneficiaries(100_000_000u128);
             set_sender(accounts.bob);
             assert!(matches!(
                 contract.add_or_update_beneficiary(accounts.bob, vec![100, 100]),
@@ -488,7 +617,7 @@ mod open_payroll {
         fn add_beneficiary_invalid_multiplier() {
             let accounts = default_accounts();
             set_sender(accounts.alice);
-            let mut contract = create_contract(100_000_000u128);
+            let mut contract = create_contract_with_no_beneficiaries(100_000_000u128);
             assert!(matches!(
                 contract.add_or_update_beneficiary(accounts.bob, vec![]),
                 Err(Error::InvalidParams)
@@ -500,7 +629,7 @@ mod open_payroll {
         fn remove_beneficiary() {
             let accounts = default_accounts();
             set_sender(accounts.alice);
-            let mut contract = create_contract(100_000_000u128);
+            let mut contract = create_contract_with_no_beneficiaries(100_000_000u128);
             contract
                 .add_or_update_beneficiary(accounts.bob, vec![100, 20])
                 .unwrap();
@@ -528,7 +657,7 @@ mod open_payroll {
         fn remove_beneficiary_without_access() {
             let accounts = default_accounts();
             set_sender(accounts.alice);
-            let mut contract = create_contract(100_000_000u128);
+            let mut contract = create_contract_with_no_beneficiaries(100_000_000u128);
             contract
                 .add_or_update_beneficiary(accounts.bob, vec![100, 20])
                 .unwrap();
@@ -549,7 +678,7 @@ mod open_payroll {
         fn remove_beneficiary_not_found() {
             let accounts = default_accounts();
             set_sender(accounts.alice);
-            let mut contract = create_contract(100_000_000u128);
+            let mut contract = create_contract_with_no_beneficiaries(100_000_000u128);
             assert!(matches!(
                 contract.remove_beneficiary(accounts.bob),
                 Err(Error::AccountNotFound)
@@ -558,12 +687,39 @@ mod open_payroll {
 
         /// Update the base payment and check that it is updated
         #[ink::test]
+        fn update_base_payment_in_initial_block() {
+            let accounts = default_accounts();
+            set_sender(accounts.alice);
+            let mut contract = create_contract(100_000_000u128, &accounts);
+            contract.update_base_payment(200_000_000u128).unwrap();
+            assert_eq!(contract.base_payment, 200_000_000u128);
+        }
+
+        /// Update the base payment and check that it is updated
+        #[ink::test]
         fn update_base_payment() {
             let accounts = default_accounts();
             set_sender(accounts.alice);
-            let mut contract = create_contract(100_000_000u128);
+            let mut contract = create_contract(100_000_000u128, &accounts);
+
+            advance_n_blocks(1);
+
             contract.update_base_payment(200_000_000u128).unwrap();
             assert_eq!(contract.base_payment, 200_000_000u128);
+        }
+
+        #[ink::test]
+        fn update_base_payment_error() {
+            let accounts = default_accounts();
+            set_sender(accounts.alice);
+            let mut contract = create_contract(100_000_000u128, &accounts);
+
+            advance_n_blocks(3);
+
+            assert!(matches!(
+                contract.update_base_payment(200_000_000u128),
+                Err(Error::NotAllClaimedInPeriod)
+            ));
         }
 
         /// Update the base payment but fails because the sender is not the owner
@@ -571,7 +727,7 @@ mod open_payroll {
         fn update_base_payment_without_access() {
             let accounts = default_accounts();
             set_sender(accounts.alice);
-            let mut contract = create_contract(100_000_000u128);
+            let mut contract = create_contract(100_000_000u128, &accounts);
             set_sender(accounts.bob);
             assert!(matches!(
                 contract.update_base_payment(200_000_000u128),
@@ -584,7 +740,7 @@ mod open_payroll {
         fn update_base_payment_invalid_base_payment() {
             let accounts = default_accounts();
             set_sender(accounts.alice);
-            let mut contract = create_contract(100_000_000u128);
+            let mut contract = create_contract(100_000_000u128, &accounts);
             assert!(matches!(
                 contract.update_base_payment(0u128),
                 Err(Error::InvalidParams)
@@ -596,7 +752,7 @@ mod open_payroll {
         fn update_periodicity() {
             let accounts = default_accounts();
             set_sender(accounts.alice);
-            let mut contract = create_contract(100_000_000u128);
+            let mut contract = create_contract(100_000_000u128, &accounts);
             contract.update_periodicity(100u32).unwrap();
             assert_eq!(contract.periodicity, 100u32);
         }
@@ -606,7 +762,7 @@ mod open_payroll {
         fn update_periodicity_without_access() {
             let accounts = default_accounts();
             set_sender(accounts.alice);
-            let mut contract = create_contract(100_000_000u128);
+            let mut contract = create_contract(100_000_000u128, &accounts);
             set_sender(accounts.bob);
             assert!(matches!(
                 contract.update_periodicity(100u32),
@@ -619,7 +775,7 @@ mod open_payroll {
         fn update_periodicity_invalid_periodicity() {
             let accounts = default_accounts();
             set_sender(accounts.alice);
-            let mut contract = create_contract(100_000_000u128);
+            let mut contract = create_contract(100_000_000u128, &accounts);
             assert!(matches!(
                 contract.update_periodicity(0u32),
                 Err(Error::InvalidParams)
@@ -632,7 +788,7 @@ mod open_payroll {
             let accounts = default_accounts();
             set_sender(accounts.alice);
             let starting_block = get_current_block();
-            let mut contract = create_contract(100_000_000u128);
+            let mut contract = create_contract(100_000_000u128, &accounts);
             contract.pause().unwrap();
             assert_eq!(contract.is_paused(), true);
             advance_n_blocks(1);
@@ -647,7 +803,7 @@ mod open_payroll {
         fn pause_and_resume_without_access() {
             let accounts = default_accounts();
             set_sender(accounts.alice);
-            let mut contract = create_contract(100_000_000u128);
+            let mut contract = create_contract(100_000_000u128, &accounts);
             set_sender(accounts.bob);
             assert!(matches!(contract.pause(), Err(Error::NotOwner)));
             assert!(matches!(contract.resume(), Err(Error::NotOwner)));
@@ -658,7 +814,7 @@ mod open_payroll {
         fn claim_payment() {
             let accounts = default_accounts();
             set_sender(accounts.alice);
-            let mut contract = create_contract(100_000_000u128);
+            let mut contract = create_contract(100_000_000u128, &accounts);
             contract
                 .add_or_update_beneficiary(accounts.bob, vec![100, 20])
                 .unwrap();
@@ -684,7 +840,7 @@ mod open_payroll {
             let total_amount = 100_000_000u128;
             let total_not_claimed = 10;
             set_sender(accounts.alice);
-            let mut contract = create_contract(total_amount);
+            let mut contract = create_contract(total_amount, &accounts);
             contract
                 .add_or_update_beneficiary(accounts.bob, vec![100, 20])
                 .unwrap();
@@ -722,7 +878,7 @@ mod open_payroll {
             let accounts = default_accounts();
             let total_amount = 100_000_000u128;
             set_sender(accounts.alice);
-            let mut contract = create_contract(total_amount);
+            let mut contract = create_contract(total_amount, &accounts);
             contract
                 .add_or_update_beneficiary(accounts.bob, vec![100, 20])
                 .unwrap();
@@ -748,7 +904,7 @@ mod open_payroll {
         fn update_periodicity_without_all_payments_updated() {
             let accounts = default_accounts();
             set_sender(accounts.alice);
-            let mut contract = create_contract(100_000_000u128);
+            let mut contract = create_contract(100_000_000u128, &accounts);
             contract
                 .add_or_update_beneficiary(accounts.bob, vec![100, 20])
                 .unwrap();
@@ -764,7 +920,7 @@ mod open_payroll {
         fn update_periodicity_with_all_payments_updated() {
             let accounts = default_accounts();
             set_sender(accounts.alice);
-            let mut contract = create_contract(100_000_000u128);
+            let mut contract = create_contract_with_no_beneficiaries(100_000_000u128);
             contract
                 .add_or_update_beneficiary(accounts.bob, vec![100, 20])
                 .unwrap();
@@ -783,7 +939,7 @@ mod open_payroll {
         fn update_periodicity_with_all_payments_claimed() {
             let accounts = default_accounts();
             set_sender(accounts.alice);
-            let mut contract = create_contract(100_000_000u128);
+            let mut contract = create_contract_with_no_beneficiaries(100_000_000u128);
             contract
                 .add_or_update_beneficiary(accounts.bob, vec![100, 20])
                 .unwrap();
@@ -807,7 +963,7 @@ mod open_payroll {
         fn update_base_payment_without_all_payments_updated() {
             let accounts = default_accounts();
             set_sender(accounts.alice);
-            let mut contract = create_contract(100_000_000u128);
+            let mut contract = create_contract_with_no_beneficiaries(100_000_000u128);
             contract
                 .add_or_update_beneficiary(accounts.bob, vec![100, 20])
                 .unwrap();
@@ -823,7 +979,7 @@ mod open_payroll {
         fn update_base_payment_with_all_payments_claimed() {
             let accounts = default_accounts();
             set_sender(accounts.alice);
-            let mut contract = create_contract(100_000_000u128);
+            let mut contract = create_contract_with_no_beneficiaries(100_000_000u128);
             contract
                 .add_or_update_beneficiary(accounts.bob, vec![100, 20])
                 .unwrap();
@@ -841,5 +997,47 @@ mod open_payroll {
 
             assert_eq!(res, Ok(()));
         }
+
+        #[ink::test]
+        fn create_contract_with_beneficiaries_ok() {
+            let accounts = default_accounts();
+            set_sender(accounts.alice);
+            let contract = create_contract(100_000_000u128, &accounts);
+
+            assert_eq!(contract.beneficiaries_accounts.len(), 2);
+            assert!(contract.beneficiaries.contains(accounts.bob));
+            assert!(contract.beneficiaries.contains(accounts.charlie));
+        }
+
+        #[ink::test]
+        fn update_benefiaries_created_in_create_contract() {
+            let accounts = default_accounts();
+            set_sender(accounts.alice);
+            let mut contract = create_contract(100_000_000u128, &accounts);
+
+            contract
+                .add_or_update_beneficiary(accounts.bob, vec![100, 20])
+                .unwrap();
+
+            //check if multipliers are ok
+            assert_eq!(
+                contract
+                    .beneficiaries
+                    .get(accounts.bob)
+                    .unwrap()
+                    .multipliers,
+                vec![100, 20]
+            );
+            assert_eq!(
+                contract
+                    .beneficiaries
+                    .get(accounts.charlie)
+                    .unwrap()
+                    .multipliers,
+                vec![100, 3]
+            );
+        }
+
+        // TODO: delete a multiplier
     }
 }
