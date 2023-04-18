@@ -811,6 +811,7 @@ mod open_payroll {
                     .multipliers,
                 vec_to_btreemap(&vec![(0, 200), (1, 50)])
             );
+
             // check if account was added to the vector
             assert_eq!(
                 contract.beneficiaries_accounts.get(0).unwrap(),
@@ -1259,6 +1260,25 @@ mod open_payroll {
             );
         }
 
-        // TODO: delete a multiplier
+        // Delete a multiplier
+        #[ink::test]
+        fn deactivate_multiplier() {
+            let accounts = default_accounts();
+            set_sender(accounts.alice);
+            let mut contract = create_contract(100_000_000u128, &accounts);
+
+            advance_n_blocks(6);
+
+            let res = contract.deactivate_multiplier(1);
+
+            advance_n_blocks(5);
+
+            assert_eq!(res, Ok(()));
+
+            let multiplier_0 = contract.base_multipliers.get(0).unwrap();
+            let multiplier_1 = contract.base_multipliers.get(1).unwrap();
+            assert_eq!(multiplier_1.deactivated_at.unwrap(), 6);
+            assert_eq!(multiplier_0.deactivated_at, None);
+        }
     }
 }
