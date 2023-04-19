@@ -71,10 +71,8 @@ mod open_payroll {
         next_multiplier_id: MultiplierId,
         /// The multipliers to apply to the base payment
         base_multipliers: Mapping<MultiplierId, BaseMultiplier>,
-        /// A list of the multipliers_ids that are currently being used
-        active_multipliers: Vec<MultiplierId>, //TODO: This could be replaces by a mapping of MultiplierId -> bool or hashmap
-        /// A list of the multipliers_ids that have been deactivated and not yet removed from all beneficiaries
-        inactive_multipliers: Vec<MultiplierId>,
+        /// A list of the multipliers_ids
+        multipliers_list: Vec<MultiplierId>,
         /// Current claims in period
         claims_in_period: ClaimsInPeriod,
     }
@@ -108,8 +106,7 @@ mod open_payroll {
             let mut beneficiaries = Mapping::default();
             let mut accounts = Vec::new();
             let mut base_multipliers = Mapping::default();
-            let mut active_multipliers = Vec::new();
-            let inactive_multipliers = Vec::new();
+            let mut multipliers_list = Vec::new();
 
             // Create the base multipliers
             for base_multiplier in initial_base_multipliers.iter() {
@@ -117,14 +114,14 @@ mod open_payroll {
                     next_multiplier_id,
                     &BaseMultiplier::new(base_multiplier.clone()),
                 );
-                active_multipliers.push(next_multiplier_id);
+                multipliers_list.push(next_multiplier_id);
                 next_multiplier_id += 1;
             }
 
             // Create the initial beneficiaries
             for beneficiary_data in initial_beneficiaries.iter() {
                 // TODO: is this check ok ? or only if multipliers are bigger than base_multipliers.len()
-                if beneficiary_data.multipliers.len() != active_multipliers.len() {
+                if beneficiary_data.multipliers.len() != multipliers_list.len() {
                     return Err(Error::InvalidMultipliersLength);
                 }
 
@@ -156,8 +153,7 @@ mod open_payroll {
                 beneficiaries_accounts: accounts,
                 next_multiplier_id,
                 base_multipliers,
-                active_multipliers,
-                inactive_multipliers,
+                multipliers_list,
                 claims_in_period,
             })
         }
@@ -178,12 +174,6 @@ mod open_payroll {
             multiplier.deactivated_at = Some(claiming_period_block);
             self.base_multipliers.insert(multiplier_id, &multiplier);
 
-            // Remove multiplier from active_multiplierss
-            self.active_multipliers.retain(|x| *x != multiplier_id);
-
-            // Add multiplier to inactive_multipliers
-            self.inactive_multipliers.push(multiplier_id);
-
             Ok(())
         }
 
@@ -202,8 +192,8 @@ mod open_payroll {
             if !(multiplier.deactivated_at.unwrap() < self.claims_in_period.period) {
                 return Err(Error::MultiplierStillInUse);
             }
-            // Remove multiplier from inactive_multipliers
-            self.inactive_multipliers.retain(|x| *x != multiplier_id);
+            // Remove multiplier from multipliers_list
+            self.multipliers_list.retain(|x| *x != multiplier_id);
 
             // Remove multiplier from base_multipliers
             self.base_multipliers.remove(&multiplier_id);
@@ -245,7 +235,21 @@ mod open_payroll {
 
             // Check that the multipliers are valid and have the same length as the base_multipliers
             // TODO: this may be shorter than the base_multipliers
-            if multipliers.len() != self.active_multipliers.len() {
+
+            // Get the active multipliers
+            let active_multipliers = self
+                .multipliers_list
+                .iter()
+                .filter(|x| {
+                    self.base_multipliers
+                        .get(x)
+                        .unwrap()
+                        .deactivated_at
+                        .is_none()
+                })
+                .collect::<Vec<_>>();
+
+            if multipliers.len() != active_multipliers.len() {
                 return Err(Error::InvalidParams);
             }
             let multipliers = vec_to_btreemap(&multipliers);
@@ -347,13 +351,13 @@ mod open_payroll {
             Ok(())
         }
 
-        /// Get amount in storage without transferring the funds
-        #[ink(message)]
-        pub fn get_amount_to_claim(&mut self, account_id: AccountId) -> Result<Balance, Error> {
-            if !self.beneficiaries.contains(&account_id) {
-                return Err(Error::AccountNotFound);
-            }
-
+        /// Filtered multipliers in true means that all multipliers are active
+        fn _get_amount_to_claim(
+            &self,
+            account_id: AccountId,
+            filtered_multipliers: bool,
+        ) -> Result<Balance, Error> {
+            // The check that beneficiary exists is done in the caller function
             let beneficiary = self.beneficiaries.get(&account_id).unwrap();
             let current_block = self.env().block_number();
 
@@ -366,23 +370,26 @@ mod open_payroll {
                 return Err(Error::NoUnclaimedPayments);
             }
 
-            //TODO Check if multipliers.length == base_multipliers.length
             // E.g (M1 + M2) * B / 100
+            // Sum all active multipliers
             let final_multiplier: u128 = if beneficiary.multipliers.is_empty() {
                 1
             } else {
-                // Remove deactivated multipliers if any
-                // beneficiary.multipliers.retain(|&k, _| {
-                //     self.base_multipliers.get(&k).unwrap().deactivated_at.is_none() //Check if the multiplier is deactivated
-                // });
-
-                // Sum all active multipliers
-                beneficiary
-                    .multipliers
-                    .iter()
-                    .filter(|(k, _)| self.active_multipliers.contains(k))
-                    .map(|(_, v)| v)
-                    .sum()
+                match filtered_multipliers {
+                    true => beneficiary.multipliers.iter().map(|(_, v)| v).sum(),
+                    _ => beneficiary
+                        .multipliers
+                        .iter()
+                        .filter(|(k, _)| {
+                            self.base_multipliers
+                                .get(k)
+                                .unwrap()
+                                .deactivated_at
+                                .is_none()
+                        })
+                        .map(|(_, v)| v)
+                        .sum(),
+                }
             };
 
             let payment_per_period: Balance = final_multiplier * self.base_payment / 100;
@@ -390,6 +397,16 @@ mod open_payroll {
                 payment_per_period * unclaimed_periods as u128 + beneficiary.unclaimed_payments;
 
             Ok(total_payment)
+        }
+
+        /// Get amount in storage without transferring the funds
+        #[ink(message)]
+        pub fn get_amount_to_claim(&self, account_id: AccountId) -> Result<Balance, Error> {
+            if !self.beneficiaries.contains(&account_id) {
+                return Err(Error::AccountNotFound);
+            }
+
+            self._get_amount_to_claim(account_id, false)
         }
 
         /// Claim payment for a single account id
@@ -403,14 +420,27 @@ mod open_payroll {
 
             let current_block = self.env().block_number();
 
-            let total_payment = Self::get_amount_to_claim(self, account_id)?;
-            if amount > total_payment {
-                return Err(Error::ClaimedAmountIsBiggerThanAvailable);
+            if !self.beneficiaries.contains(&account_id) {
+                return Err(Error::AccountNotFound);
             }
 
             let mut beneficiary = self.beneficiaries.get(&account_id).expect(
                 "This will never panic because we check it in the function get_amount_to_claim",
             );
+
+            // If there are deactivated multipliers, remove them from the beneficiary
+            beneficiary.multipliers.retain(|&k, _| {
+                self.base_multipliers
+                    .get(&k)
+                    .unwrap()
+                    .deactivated_at
+                    .is_none()
+            });
+
+            let total_payment = self._get_amount_to_claim(account_id, true)?;
+            if amount > total_payment {
+                return Err(Error::ClaimedAmountIsBiggerThanAvailable);
+            }
 
             let treasury_balance = self.env().balance();
             if amount > treasury_balance {
@@ -423,13 +453,6 @@ mod open_payroll {
             // If the beneficiary has not claimed anything in the current period
             if beneficiary.last_claimed_period_block != claiming_period_block {
                 self.update_claims_in_period(claiming_period_block);
-            }
-
-            // If there are deactivated multipliers, remove them from the beneficiary
-            if !self.inactive_multipliers.is_empty() {
-                beneficiary
-                    .multipliers
-                    .retain(|&k, _| self.active_multipliers.contains(&k));
             }
 
             self.beneficiaries.insert(
