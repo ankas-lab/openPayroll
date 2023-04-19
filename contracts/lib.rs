@@ -119,6 +119,7 @@ mod open_payroll {
                 next_multiplier_id += 1;
             }
 
+            //TODO: Check that all the accounts are different
             // Create the initial beneficiaries
             for beneficiary_data in initial_beneficiaries.iter() {
                 if beneficiary_data.multipliers.len() != multipliers_list.len() {
@@ -244,6 +245,8 @@ mod open_payroll {
             Ok(())
         }
 
+        //TODO: Maybe this function could be generic over the type of the vec and the error type
+        // Can be used to check unique multipliers and also unique beneficiaries
         fn check_no_duplicate_multipliers(
             &self,
             multipliers: &Vec<(MultiplierId, Multiplier)>,
@@ -260,6 +263,7 @@ mod open_payroll {
 
         /// Add a new beneficiary or modify the multiplier of an existing one.
         /// TODO: maybe split this function in two
+        /// TODO: Check that all the accounts are different
         #[ink(message)]
         pub fn add_or_update_beneficiary(
             &mut self,
@@ -272,22 +276,6 @@ mod open_payroll {
             self.check_multipliers_are_valid(&multipliers)?;
             self.check_no_duplicate_multipliers(&multipliers)?;
 
-            // Get the active multipliers
-            let active_multipliers = self
-                .multipliers_list
-                .iter()
-                .filter(|x| {
-                    self.base_multipliers
-                        .get(x)
-                        .unwrap()
-                        .deactivated_at
-                        .is_none()
-                })
-                .collect::<Vec<_>>();
-
-            if multipliers.len() != active_multipliers.len() {
-                return Err(Error::InvalidParams);
-            }
             let multipliers = vec_to_btreemap(&multipliers);
 
             if let Some(beneficiary) = self.beneficiaries.get(&account_id) {
@@ -893,13 +881,13 @@ mod open_payroll {
 
         /// Add a new beneficiary and fails because the multiplies is 0
         #[ink::test]
-        fn add_beneficiary_invalid_multiplier() {
+        fn add_beneficiary_with_no_multipliers() {
             let accounts = default_accounts();
             set_sender(accounts.alice);
             let mut contract = create_contract_with_no_beneficiaries(100_000_000u128);
             assert!(matches!(
                 contract.add_or_update_beneficiary(accounts.bob, vec![]),
-                Err(Error::InvalidParams)
+                Ok(_)
             ));
         }
 
