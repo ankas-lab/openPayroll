@@ -5,6 +5,7 @@ mod errors;
 mod open_payroll {
     use crate::errors::Error;
     use ink::prelude::collections::BTreeMap;
+    use ink::prelude::collections::HashSet;
     use ink::prelude::string::String;
     use ink::prelude::vec::Vec;
     use ink::storage::traits::StorageLayout;
@@ -72,7 +73,7 @@ mod open_payroll {
         /// The multipliers to apply to the base payment
         base_multipliers: Mapping<MultiplierId, BaseMultiplier>,
         /// A list of the multipliers_ids
-        multipliers_list: Vec<MultiplierId>,
+        multipliers_list: Vec<MultiplierId>, // TODO: Convert this to HashSet. Set max amount of multipliers.
         /// Current claims in period
         claims_in_period: ClaimsInPeriod,
     }
@@ -222,6 +223,41 @@ mod open_payroll {
             Ok(())
         }
 
+        fn check_multipliers_are_valid(
+            &self,
+            multipliers: &Vec<(MultiplierId, Multiplier)>,
+        ) -> Result<(), Error> {
+            for (multiplier_id, _) in multipliers.iter() {
+                if !self.base_multipliers.contains(multiplier_id) {
+                    return Err(Error::MultiplierNotFound);
+                }
+                if self
+                    .base_multipliers
+                    .get(multiplier_id)
+                    .unwrap()
+                    .deactivated_at
+                    .is_some()
+                {
+                    return Err(Error::MultiplierAlreadyDeactivated);
+                }
+            }
+            Ok(())
+        }
+
+        fn check_no_duplicate_multipliers(
+            &self,
+            multipliers: &Vec<(MultiplierId, Multiplier)>,
+        ) -> Result<(), Error> {
+            let mut seen_multipliers = HashSet::new();
+            for &(multiplier_id, _) in multipliers {
+                if !seen_multipliers.insert(multiplier_id) {
+                    return Err(Error::DuplicatedMultipliers);
+                }
+            }
+
+            Ok(())
+        }
+
         /// Add a new beneficiary or modify the multiplier of an existing one.
         /// TODO: maybe split this function in two
         #[ink(message)]
@@ -232,7 +268,10 @@ mod open_payroll {
         ) -> Result<(), Error> {
             self.ensure_owner()?;
 
-            // TODO: Check that the multipliers are valid and have the same length as the base_multipliers
+            // TODO: Add tests for this checks
+            self.check_multipliers_are_valid(&multipliers)?;
+            self.check_no_duplicate_multipliers(&multipliers)?;
+
             // Get the active multipliers
             let active_multipliers = self
                 .multipliers_list

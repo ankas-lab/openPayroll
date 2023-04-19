@@ -30,5 +30,7 @@ pub enum Error {
     // The multiplier is not deactivated
     MultiplierNotDeactivated,
     // The multiplier is not deactivated
-    MultiplierStillInUse
+    MultiplierStillInUse,
+    // There are duplicated multipliers
+    DuplicatedMultipliers,
 }
