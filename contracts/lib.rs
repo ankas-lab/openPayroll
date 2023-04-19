@@ -120,7 +120,6 @@ mod open_payroll {
 
             // Create the initial beneficiaries
             for beneficiary_data in initial_beneficiaries.iter() {
-                // TODO: is this check ok ? or only if multipliers are bigger than base_multipliers.len()
                 if beneficiary_data.multipliers.len() != multipliers_list.len() {
                     return Err(Error::InvalidMultipliersLength);
                 }
@@ -177,7 +176,7 @@ mod open_payroll {
             Ok(())
         }
 
-        //TODO: Add function to delete multiplier only if deactivated_at < current_period && ensure_claimed
+        //TODO: Call this function from somewhere
         fn delete_unused_multiplier(&mut self, multiplier_id: MultiplierId) -> Result<(), Error> {
             let multiplier = self
                 .base_multipliers
@@ -233,9 +232,7 @@ mod open_payroll {
         ) -> Result<(), Error> {
             self.ensure_owner()?;
 
-            // Check that the multipliers are valid and have the same length as the base_multipliers
-            // TODO: this may be shorter than the base_multipliers
-
+            // TODO: Check that the multipliers are valid and have the same length as the base_multipliers
             // Get the active multipliers
             let active_multipliers = self
                 .multipliers_list
@@ -334,8 +331,6 @@ mod open_payroll {
         }
 
         /// Check if all payments up to date or storage unclaiumed_payments is up-to-date
-        ///
-        /// TODO: it would be better to return a vector of accounts that are not up to date ?
         #[ink(message)]
         pub fn ensure_all_payments_uptodate(&self) -> Result<(), Error> {
             let current_block = self.env().block_number();
