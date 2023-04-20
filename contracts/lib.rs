@@ -42,6 +42,7 @@ mod open_payroll {
     #[cfg_attr(feature = "std", derive(scale_info::TypeInfo, StorageLayout))]
     pub struct InitialBeneficiary {
         account_id: AccountId,
+        // Vector rather than BTreeMap because its easier to buid from the frontend
         multipliers: Vec<(MultiplierId, Multiplier)>,
     }
 
@@ -191,7 +192,7 @@ mod open_payroll {
             self.ensure_all_claimed_in_period()?;
 
             if !(multiplier.deactivated_at.unwrap() < self.claims_in_period.period) {
-                return Err(Error::MultiplierStillInUse);
+                return Err(Error::MultiplierNotDeactivated);
             }
             // Remove multiplier from multipliers_list
             self.multipliers_list.retain(|x| *x != multiplier_id);
@@ -248,7 +249,6 @@ mod open_payroll {
         //TODO: Maybe this function could be generic over the type of the vec and the error type
         // Can be used to check unique multipliers and also unique beneficiaries
         fn check_no_duplicate_multipliers(
-            &self,
             multipliers: &Vec<(MultiplierId, Multiplier)>,
         ) -> Result<(), Error> {
             let mut seen_multipliers = HashSet::new();
@@ -274,7 +274,7 @@ mod open_payroll {
 
             // TODO: Add tests for this checks
             self.check_multipliers_are_valid(&multipliers)?;
-            self.check_no_duplicate_multipliers(&multipliers)?;
+            OpenPayroll::check_no_duplicate_multipliers(&multipliers)?;
 
             let multipliers = vec_to_btreemap(&multipliers);
 
@@ -1307,7 +1307,7 @@ mod open_payroll {
 
         // Delete a multiplier
         #[ink::test]
-        fn deactivate_multiplier() {
+        fn test_deactivate_multiplier() {
             let accounts = default_accounts();
             set_sender(accounts.alice);
             let mut contract = create_contract(100_000_000u128, &accounts);
