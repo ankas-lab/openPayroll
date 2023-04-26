@@ -5,7 +5,6 @@ mod errors;
 mod open_payroll {
     use crate::errors::Error;
     use ink::prelude::collections::BTreeMap;
-    use ink::prelude::collections::HashSet;
     use ink::prelude::string::String;
     use ink::prelude::vec::Vec;
     use ink::storage::traits::StorageLayout;
@@ -251,9 +250,11 @@ mod open_payroll {
         fn check_no_duplicate_multipliers(
             multipliers: &Vec<(MultiplierId, Multiplier)>,
         ) -> Result<(), Error> {
-            let mut seen_multipliers = HashSet::new();
-            for &(multiplier_id, _) in multipliers {
-                if !seen_multipliers.insert(multiplier_id) {
+            let mut sorted_multipliers = multipliers.clone();
+            sorted_multipliers.sort_by_key(|&(multiplier_id, _)| multiplier_id);
+
+            for i in 1..sorted_multipliers.len() {
+                if sorted_multipliers[i - 1].0 == sorted_multipliers[i].0 {
                     return Err(Error::DuplicatedMultipliers);
                 }
             }
