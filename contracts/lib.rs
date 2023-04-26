@@ -666,19 +666,14 @@ mod open_payroll {
             total
         }
 
-        /// get all the debts up-to-date
+        /// get unclaimed balance per beneficiary
         /// read-only
         #[ink(message)]
         pub fn get_unclaimed_balance(&self, account_id: AccountId) -> Balance {
-            let claiming_period_block = self.get_current_block_period();
-            let beneficiary = self.beneficiaries.get(&account_id).unwrap();
-            if beneficiary.last_claimed_period_block < claiming_period_block {
-                return match self._get_amount_to_claim(account_id, false) {
-                    Ok(amount) => amount,
-                    Err(_) => beneficiary.unclaimed_payments,
-                };
-            }
-            beneficiary.unclaimed_payments
+            return match self._get_amount_to_claim(account_id, false) {
+                Ok(amount) => amount,
+                Err(_) => 0,
+            };
         }
     }
 
