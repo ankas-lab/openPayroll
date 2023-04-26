@@ -4,4 +4,4 @@ test:
 `cargo test`
 
 compile:
-`cargo +nightly contract build --release`
+`cargo contract build --release`
