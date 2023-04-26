@@ -34,7 +34,7 @@ mod open_payroll {
         account_id: AccountId,
         multipliers: BTreeMap<MultiplierId, Multiplier>, //https://paritytech.github.io/ink/ink_prelude/collections/btree_map/struct.BTreeMap.html#method.iter
         unclaimed_payments: Balance,
-        last_claimed_period_block: BlockNumber,
+        last_claimed_period_block: BlockNumber, // TODO: CHECK if change the name to last_updated_period_block
     }
 
     #[derive(scale::Encode, scale::Decode, Eq, PartialEq, Debug, Clone)]
@@ -168,9 +168,7 @@ mod open_payroll {
             if multiplier.deactivated_at.is_some() {
                 return Err(Error::MultiplierAlreadyDeactivated);
             }
-            let current_block = self.env().block_number();
-            let claiming_period_block =
-                current_block - ((current_block - self.initial_block) % self.periodicity);
+            let claiming_period_block = self.get_current_block_period();
 
             multiplier.deactivated_at = Some(claiming_period_block);
             self.base_multipliers.insert(multiplier_id, &multiplier);
@@ -441,8 +439,6 @@ mod open_payroll {
         ) -> Result<(), Error> {
             self.ensure_is_not_paused()?;
 
-            let current_block = self.env().block_number();
-
             if !self.beneficiaries.contains(&account_id) {
                 return Err(Error::AccountNotFound);
             }
@@ -470,8 +466,7 @@ mod open_payroll {
                 return Err(Error::NotEnoughBalanceInTreasury);
             }
 
-            let claiming_period_block =
-                current_block - ((current_block - self.initial_block) % self.periodicity);
+            let claiming_period_block = self.get_current_block_period();
 
             // If the beneficiary has not claimed anything in the current period
             if beneficiary.last_claimed_period_block != claiming_period_block {
@@ -510,9 +505,7 @@ mod open_payroll {
         }
 
         fn ensure_all_claimed_in_period(&mut self) -> Result<(), Error> {
-            let current_block = self.env().block_number();
-            let claiming_period_block =
-                current_block - ((current_block - self.initial_block) % self.periodicity);
+            let claiming_period_block = self.get_current_block_period();
 
             let claims_in_period = self.claims_in_period.clone();
 
@@ -565,6 +558,7 @@ mod open_payroll {
         }
 
         /// Get beneficiary only read
+        /// read-only
         #[ink(message)]
         pub fn get_beneficiary(&mut self, account_id: AccountId) -> Result<Beneficiary, Error> {
             if !self.beneficiaries.contains(&account_id) {
@@ -573,7 +567,130 @@ mod open_payroll {
             let beneficiary = self.beneficiaries.get(&account_id).unwrap();
             Ok(beneficiary)
         }
+
+        /// get current block period
+        /// read-only
+        #[ink(message)]
+        pub fn get_current_block_period(&self) -> BlockNumber {
+            let current_block = self.env().block_number();
+            let claiming_period_block =
+                current_block - ((current_block - self.initial_block) % self.periodicity);
+            claiming_period_block
+        }
+
+        /// get next block period
+        #[ink(message)]
+        pub fn get_next_block_period(&self) -> BlockNumber {
+            self.get_current_block_period() + self.periodicity
+        }
+
+        /// get all the debts up-to-date
+        /// read-only
+        #[ink(message)]
+        pub fn get_total_debts(&self) -> Balance {
+            let claiming_period_block = self.get_current_block_period();
+
+            let mut debts = 0;
+            for account_id in self.beneficiaries_accounts.iter() {
+                let beneficiary = self.beneficiaries.get(account_id).unwrap();
+                if beneficiary.last_claimed_period_block < claiming_period_block {
+                    let amount = match self._get_amount_to_claim(beneficiary.account_id, false) {
+                        Ok(amount) => amount,
+                        Err(_) => 0,
+                    };
+                    debts += amount;
+                }
+            }
+
+            debts
+        }
+
+        // count of beneficiaries
+        /// read-only
+        #[ink(message)]
+        pub fn get_amount_beneficiaries(&self) -> u8 {
+            self.beneficiaries_accounts.len() as u8
+        }
+
+        /// get list of payees
+        /// read-only
+        #[ink(message)]
+        pub fn get_list_payees(&self) -> Vec<AccountId> {
+            self.beneficiaries_accounts.clone()
+        }
+
+        /// get contract balance
+        /// read-only
+        #[ink(message)]
+        pub fn get_contract_balance(&self) -> Balance {
+            self.env().balance()
+        }
+
+        /// get total balance after paying debts
+        /// read-only
+        #[ink(message)]
+        pub fn get_balance_with_debts(&self) -> Balance {
+            self.get_contract_balance() - self.get_total_debts()
+        }
+
+        /// get list of unclaimed beneficiaries
+        /// read-only
+        #[ink(message)]
+        pub fn get_unclaimed_beneficiaries(&self) -> Vec<AccountId> {
+            let claiming_period_block = self.get_current_block_period();
+
+            let mut unclaimed_beneficiaries = Vec::new();
+            for account_id in self.beneficiaries_accounts.iter() {
+                let beneficiary = self.beneficiaries.get(account_id).unwrap();
+                if beneficiary.last_claimed_period_block < claiming_period_block {
+                    unclaimed_beneficiaries.push(beneficiary.account_id);
+                }
+            }
+
+            unclaimed_beneficiaries
+        }
+
+        /// get count of unclaimed beneficiaries
+        /// read-only
+        #[ink(message)]
+        pub fn get_count_of_unclaim_beneficiaries(&self) -> u8 {
+            let claiming_period_block = self.get_current_block_period();
+            let mut total: u8 = 0;
+            for account_id in self.beneficiaries_accounts.iter() {
+                let beneficiary = self.beneficiaries.get(account_id).unwrap();
+                if beneficiary.last_claimed_period_block < claiming_period_block {
+                    total += 1;
+                }
+            }
+
+            total
+        }
+
+        /// get all the debts up-to-date
+        /// read-only
+        #[ink(message)]
+        pub fn get_unclaimed_balance(&self, account_id: AccountId) -> Balance {
+            let claiming_period_block = self.get_current_block_period();
+            let beneficiary = self.beneficiaries.get(&account_id).unwrap();
+            if beneficiary.last_claimed_period_block < claiming_period_block {
+                return match self._get_amount_to_claim(account_id, false) {
+                    Ok(amount) => amount,
+                    Err(_) => beneficiary.unclaimed_payments,
+                };
+            }
+            beneficiary.unclaimed_payments
+        }
     }
+
+    /*
+    TODO: make tests for read-only functions
+
+    Debts of past periods->balance
+    Next period amount->balance
+    next period payees->list of payees
+    balance -.debts - next period amount	->balance
+    payee next period	->balance
+    */
 
     /// ---------------------------------------------------------------
     ///
