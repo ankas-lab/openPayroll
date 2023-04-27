@@ -665,16 +665,6 @@ mod open_payroll {
 
             total
         }
-
-        /// get unclaimed balance per beneficiary
-        /// read-only
-        #[ink(message)]
-        pub fn get_unclaimed_balance(&self, account_id: AccountId) -> Balance {
-            return match self._get_amount_to_claim(account_id, false) {
-                Ok(amount) => amount,
-                Err(_) => 0,
-            };
-        }
     }
 
     /*
