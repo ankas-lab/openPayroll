@@ -23,4 +23,12 @@ pub enum Error {
     ClaimedAmountIsBiggerThanAvailable,
     // The amount of multipliers per Beneficiary is not equal to the amount of periods
     InvalidMultipliersLength,
+    // The multiplier id does not exist
+    MultiplierNotFound,
+    // The multiplier is already deactivated
+    MultiplierAlreadyDeactivated,
+    // The multiplier is not deactivated
+    MultiplierNotDeactivated,
+    // There are duplicated multipliers
+    DuplicatedMultipliers,
 }

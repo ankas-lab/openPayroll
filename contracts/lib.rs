@@ -4,27 +4,45 @@ mod errors;
 #[ink::contract]
 mod open_payroll {
     use crate::errors::Error;
+    use ink::prelude::collections::BTreeMap;
     use ink::prelude::string::String;
     use ink::prelude::vec::Vec;
     use ink::storage::traits::StorageLayout;
     use ink::storage::Mapping;
 
     type Multiplier = u128;
+    type MultiplierId = u32;
 
     #[derive(scale::Encode, scale::Decode, Eq, PartialEq, Debug, Clone)]
     #[cfg_attr(feature = "std", derive(scale_info::TypeInfo, StorageLayout))]
+    pub struct BaseMultiplier {
+        name: String,
+        deactivated_at: Option<BlockNumber>,
+    }
+    impl BaseMultiplier {
+        pub fn new(name: String) -> Self {
+            Self {
+                name,
+                deactivated_at: None,
+            }
+        }
+    }
+
+    #[derive(scale::Encode, scale::Decode, Eq, PartialEq, Debug, Clone)]
+    #[cfg_attr(feature = "std", derive(scale_info::TypeInfo, StorageLayout,))]
     pub struct Beneficiary {
         account_id: AccountId,
-        multipliers: Vec<Multiplier>,
+        multipliers: BTreeMap<MultiplierId, Multiplier>, //https://paritytech.github.io/ink/ink_prelude/collections/btree_map/struct.BTreeMap.html#method.iter
         unclaimed_payments: Balance,
-        last_claimed_period_block: BlockNumber,
+        last_claimed_period_block: BlockNumber, // TODO: CHECK if change the name to last_updated_period_block
     }
 
     #[derive(scale::Encode, scale::Decode, Eq, PartialEq, Debug, Clone)]
     #[cfg_attr(feature = "std", derive(scale_info::TypeInfo, StorageLayout))]
     pub struct InitialBeneficiary {
         account_id: AccountId,
-        multipliers: Vec<Multiplier>,
+        // Vector rather than BTreeMap because its easier to buid from the frontend
+        multipliers: Vec<(MultiplierId, Multiplier)>,
     }
 
     #[derive(scale::Encode, scale::Decode, Eq, PartialEq, Debug, Clone)]
@@ -40,7 +58,7 @@ mod open_payroll {
         owner: AccountId,
         /// Mapping with the accounts of the beneficiaries and the multiplier to apply to the base payment
         beneficiaries: Mapping<AccountId, Beneficiary>,
-        // Vector of Accounts
+        /// Vector of Accounts
         beneficiaries_accounts: Vec<AccountId>,
         /// We pay out every n blocks
         periodicity: u32,
@@ -50,23 +68,37 @@ mod open_payroll {
         initial_block: u32,
         /// The block number when the contract was paused
         paused_block_at: Option<u32>,
+        /// The id of the next multiplier to be added
+        next_multiplier_id: MultiplierId,
         /// The multipliers to apply to the base payment
-        base_multipliers: Vec<String>,
+        base_multipliers: Mapping<MultiplierId, BaseMultiplier>,
+        /// A list of the multipliers_ids
+        multipliers_list: Vec<MultiplierId>, // TODO: Convert this to HashSet. Set max amount of multipliers.
         /// Current claims in period
         claims_in_period: ClaimsInPeriod,
     }
 
+    fn vec_to_btreemap(
+        vec: &Vec<(MultiplierId, Multiplier)>,
+    ) -> BTreeMap<MultiplierId, Multiplier> {
+        let mut btree_map = BTreeMap::new();
+        for (id, multiplier) in vec.iter() {
+            btree_map.insert(*id, *multiplier);
+        }
+        btree_map
+    }
+
     impl OpenPayroll {
-        #[ink(constructor)]
+        #[ink(constructor, payable)]
         pub fn new(
             periodicity: u32,
             base_payment: Balance,
-            base_multipliers: Vec<String>,
+            initial_base_multipliers: Vec<String>,
             initial_beneficiaries: Vec<InitialBeneficiary>,
         ) -> Result<Self, Error> {
             let initial_block_number = Self::env().block_number();
             let owner = Self::env().caller();
-            // TODO: move this to a parameter
+            let mut next_multiplier_id = 0;
 
             if base_payment <= 0 || periodicity == 0 {
                 return Err(Error::InvalidParams);
@@ -74,15 +106,31 @@ mod open_payroll {
 
             let mut beneficiaries = Mapping::default();
             let mut accounts = Vec::new();
+            let mut base_multipliers = Mapping::default();
+            let mut multipliers_list = Vec::new();
+
+            // Create the base multipliers
+            for base_multiplier in initial_base_multipliers.iter() {
+                base_multipliers.insert(
+                    next_multiplier_id,
+                    &BaseMultiplier::new(base_multiplier.clone()),
+                );
+                multipliers_list.push(next_multiplier_id);
+                next_multiplier_id += 1;
+            }
+
+            //TODO: Check that all the accounts are different
+            // Create the initial beneficiaries
             for beneficiary_data in initial_beneficiaries.iter() {
-                // TODO: is this check ok ? or only if multipliers are bigger than base_multipliers.len()
-                if beneficiary_data.multipliers.len() != base_multipliers.len() {
+                if beneficiary_data.multipliers.len() != multipliers_list.len() {
                     return Err(Error::InvalidMultipliersLength);
                 }
 
+                let multipliers = vec_to_btreemap(&beneficiary_data.multipliers);
+
                 let beneficiary = Beneficiary {
                     account_id: beneficiary_data.account_id,
-                    multipliers: beneficiary_data.multipliers.clone(),
+                    multipliers,
                     unclaimed_payments: 0,
                     last_claimed_period_block: initial_block_number,
                 };
@@ -104,9 +152,52 @@ mod open_payroll {
                 initial_block: initial_block_number,
                 paused_block_at: None,
                 beneficiaries_accounts: accounts,
+                next_multiplier_id,
                 base_multipliers,
+                multipliers_list,
                 claims_in_period,
             })
+        }
+
+        #[ink(message)]
+        pub fn deactivate_multiplier(&mut self, multiplier_id: MultiplierId) -> Result<(), Error> {
+            let mut multiplier = self
+                .base_multipliers
+                .get(&multiplier_id)
+                .ok_or(Error::MultiplierNotFound)?;
+            if multiplier.deactivated_at.is_some() {
+                return Err(Error::MultiplierAlreadyDeactivated);
+            }
+            let claiming_period_block = self.get_current_block_period();
+
+            multiplier.deactivated_at = Some(claiming_period_block);
+            self.base_multipliers.insert(multiplier_id, &multiplier);
+
+            Ok(())
+        }
+
+        //TODO: Call this function from somewhere
+        fn delete_unused_multiplier(&mut self, multiplier_id: MultiplierId) -> Result<(), Error> {
+            let multiplier = self
+                .base_multipliers
+                .get(&multiplier_id)
+                .ok_or(Error::MultiplierNotFound)?;
+            if multiplier.deactivated_at.is_none() {
+                return Err(Error::MultiplierNotDeactivated);
+            }
+
+            self.ensure_all_claimed_in_period()?;
+
+            if !(multiplier.deactivated_at.unwrap() < self.claims_in_period.period) {
+                return Err(Error::MultiplierNotDeactivated);
+            }
+            // Remove multiplier from multipliers_list
+            self.multipliers_list.retain(|x| *x != multiplier_id);
+
+            // Remove multiplier from base_multipliers
+            self.base_multipliers.remove(&multiplier_id);
+
+            Ok(())
         }
 
         // Ensure_owner ensures that the caller is the owner of the contract
@@ -123,28 +214,68 @@ mod open_payroll {
             self.paused_block_at.is_some()
         }
 
-        // ensure_in_not_paused ensures that the contract is not paused
-        fn ensure_in_not_paused(&self) -> Result<(), Error> {
+        // ensure_is_not_paused ensures that the contract is not paused
+        fn ensure_is_not_paused(&self) -> Result<(), Error> {
             if self.is_paused() {
                 return Err(Error::ContractIsPaused);
             }
             Ok(())
         }
 
+        fn check_multipliers_are_valid(
+            &self,
+            multipliers: &Vec<(MultiplierId, Multiplier)>,
+        ) -> Result<(), Error> {
+            for (multiplier_id, _) in multipliers.iter() {
+                if !self.base_multipliers.contains(multiplier_id) {
+                    return Err(Error::MultiplierNotFound);
+                }
+                if self
+                    .base_multipliers
+                    .get(multiplier_id)
+                    .unwrap()
+                    .deactivated_at
+                    .is_some()
+                {
+                    return Err(Error::MultiplierAlreadyDeactivated);
+                }
+            }
+            Ok(())
+        }
+
+        //TODO: Maybe this function could be generic over the type of the vec and the error type
+        // Can be used to check unique multipliers and also unique beneficiaries
+        fn check_no_duplicate_multipliers(
+            multipliers: &Vec<(MultiplierId, Multiplier)>,
+        ) -> Result<(), Error> {
+            let mut sorted_multipliers = multipliers.clone();
+            sorted_multipliers.sort_by_key(|&(multiplier_id, _)| multiplier_id);
+
+            for i in 1..sorted_multipliers.len() {
+                if sorted_multipliers[i - 1].0 == sorted_multipliers[i].0 {
+                    return Err(Error::DuplicatedMultipliers);
+                }
+            }
+
+            Ok(())
+        }
+
         /// Add a new beneficiary or modify the multiplier of an existing one.
+        /// TODO: maybe split this function in two
+        /// TODO: Check that all the accounts are different
         #[ink(message)]
         pub fn add_or_update_beneficiary(
             &mut self,
             account_id: AccountId,
-            multipliers: Vec<Multiplier>,
+            multipliers: Vec<(MultiplierId, Multiplier)>,
         ) -> Result<(), Error> {
             self.ensure_owner()?;
 
-            // Check that the multipliers are valid and have the same length as the base_multipliers
-            // TODO: this may be shorter than the base_multipliers
-            if multipliers.len() != self.base_multipliers.len() {
-                return Err(Error::InvalidParams);
-            }
+            // TODO: Add tests for this checks
+            self.check_multipliers_are_valid(&multipliers)?;
+            OpenPayroll::check_no_duplicate_multipliers(&multipliers)?;
+
+            let multipliers = vec_to_btreemap(&multipliers);
 
             if let Some(beneficiary) = self.beneficiaries.get(&account_id) {
                 // update the multiplier
@@ -226,8 +357,6 @@ mod open_payroll {
         }
 
         /// Check if all payments up to date or storage unclaiumed_payments is up-to-date
-        ///
-        /// TODO: it would be better to return a vector of accounts that are not up to date ?
         #[ink(message)]
         pub fn ensure_all_payments_uptodate(&self) -> Result<(), Error> {
             let current_block = self.env().block_number();
@@ -243,13 +372,13 @@ mod open_payroll {
             Ok(())
         }
 
-        /// Get amount in storage without transferring the funds
-        #[ink(message)]
-        pub fn get_amount_to_claim(&mut self, account_id: AccountId) -> Result<Balance, Error> {
-            if !self.beneficiaries.contains(&account_id) {
-                return Err(Error::AccountNotFound);
-            }
-
+        /// Filtered multipliers in true means that all multipliers are active
+        fn _get_amount_to_claim(
+            &self,
+            account_id: AccountId,
+            filtered_multipliers: bool,
+        ) -> Result<Balance, Error> {
+            // The check that beneficiary exists is done in the caller function
             let beneficiary = self.beneficiaries.get(&account_id).unwrap();
             let current_block = self.env().block_number();
 
@@ -262,12 +391,26 @@ mod open_payroll {
                 return Err(Error::NoUnclaimedPayments);
             }
 
-            //TODO Check if multipliers.length == base_multipliers.length
             // E.g (M1 + M2) * B / 100
+            // Sum all active multipliers
             let final_multiplier: u128 = if beneficiary.multipliers.is_empty() {
                 1
             } else {
-                beneficiary.multipliers.iter().sum()
+                match filtered_multipliers {
+                    true => beneficiary.multipliers.iter().map(|(_, v)| v).sum(),
+                    _ => beneficiary
+                        .multipliers
+                        .iter()
+                        .filter(|(k, _)| {
+                            self.base_multipliers
+                                .get(k)
+                                .unwrap()
+                                .deactivated_at
+                                .is_none()
+                        })
+                        .map(|(_, v)| v)
+                        .sum(),
+                }
             };
 
             let payment_per_period: Balance = final_multiplier * self.base_payment / 100;
@@ -277,6 +420,16 @@ mod open_payroll {
             Ok(total_payment)
         }
 
+        /// Get amount in storage without transferring the funds
+        #[ink(message)]
+        pub fn get_amount_to_claim(&self, account_id: AccountId) -> Result<Balance, Error> {
+            if !self.beneficiaries.contains(&account_id) {
+                return Err(Error::AccountNotFound);
+            }
+
+            self._get_amount_to_claim(account_id, false)
+        }
+
         /// Claim payment for a single account id
         #[ink(message)]
         pub fn claim_payment(
@@ -284,26 +437,36 @@ mod open_payroll {
             account_id: AccountId,
             amount: Balance,
         ) -> Result<(), Error> {
-            self.ensure_in_not_paused()?;
+            self.ensure_is_not_paused()?;
 
-            let current_block = self.env().block_number();
+            if !self.beneficiaries.contains(&account_id) {
+                return Err(Error::AccountNotFound);
+            }
 
-            let total_payment = Self::get_amount_to_claim(self, account_id)?;
+            let mut beneficiary = self.beneficiaries.get(&account_id).expect(
+                "This will never panic because we check it in the function get_amount_to_claim",
+            );
+
+            // If there are deactivated multipliers, remove them from the beneficiary
+            beneficiary.multipliers.retain(|&k, _| {
+                self.base_multipliers
+                    .get(&k)
+                    .unwrap()
+                    .deactivated_at
+                    .is_none()
+            });
+
+            let total_payment = self._get_amount_to_claim(account_id, true)?;
             if amount > total_payment {
                 return Err(Error::ClaimedAmountIsBiggerThanAvailable);
             }
-
-            let beneficiary = self.beneficiaries.get(&account_id).expect(
-                "This will never panic because we check it in the function get_amount_to_claim",
-            );
 
             let treasury_balance = self.env().balance();
             if amount > treasury_balance {
                 return Err(Error::NotEnoughBalanceInTreasury);
             }
 
-            let claiming_period_block =
-                current_block - ((current_block - self.initial_block) % self.periodicity);
+            let claiming_period_block = self.get_current_block_period();
 
             // If the beneficiary has not claimed anything in the current period
             if beneficiary.last_claimed_period_block != claiming_period_block {
@@ -342,9 +505,7 @@ mod open_payroll {
         }
 
         fn ensure_all_claimed_in_period(&mut self) -> Result<(), Error> {
-            let current_block = self.env().block_number();
-            let claiming_period_block =
-                current_block - ((current_block - self.initial_block) % self.periodicity);
+            let claiming_period_block = self.get_current_block_period();
 
             let claims_in_period = self.claims_in_period.clone();
 
@@ -397,6 +558,7 @@ mod open_payroll {
         }
 
         /// Get beneficiary only read
+        /// read-only
         #[ink(message)]
         pub fn get_beneficiary(&mut self, account_id: AccountId) -> Result<Beneficiary, Error> {
             if !self.beneficiaries.contains(&account_id) {
@@ -405,8 +567,125 @@ mod open_payroll {
             let beneficiary = self.beneficiaries.get(&account_id).unwrap();
             Ok(beneficiary)
         }
+
+        /// get current block period
+        /// read-only
+        #[ink(message)]
+        pub fn get_current_block_period(&self) -> BlockNumber {
+            let current_block = self.env().block_number();
+            let claiming_period_block =
+                current_block - ((current_block - self.initial_block) % self.periodicity);
+            claiming_period_block
+        }
+
+        /// get next block period
+        #[ink(message)]
+        pub fn get_next_block_period(&self) -> BlockNumber {
+            self.get_current_block_period() + self.periodicity
+        }
+
+        /// get all the debts up-to-date
+        /// read-only
+        #[ink(message)]
+        pub fn get_total_debts(&self) -> Balance {
+            let claiming_period_block = self.get_current_block_period();
+
+            let mut debts = 0;
+            for account_id in self.beneficiaries_accounts.iter() {
+                let beneficiary = self.beneficiaries.get(account_id).unwrap();
+                if beneficiary.last_claimed_period_block < claiming_period_block {
+                    let amount = match self._get_amount_to_claim(beneficiary.account_id, false) {
+                        Ok(amount) => amount,
+                        Err(_) => 0,
+                    };
+                    debts += amount;
+                }
+            }
+
+            debts
+        }
+
+        // count of beneficiaries
+        /// read-only
+        #[ink(message)]
+        pub fn get_amount_beneficiaries(&self) -> u8 {
+            self.beneficiaries_accounts.len() as u8
+        }
+
+        /// get list of payees
+        /// read-only
+        #[ink(message)]
+        pub fn get_list_payees(&self) -> Vec<AccountId> {
+            self.beneficiaries_accounts.clone()
+        }
+
+        /// get contract balance
+        /// read-only
+        #[ink(message)]
+        pub fn get_contract_balance(&self) -> Balance {
+            self.env().balance()
+        }
+
+        /// get total balance after paying debts
+        /// read-only
+        #[ink(message)]
+        pub fn get_balance_with_debts(&self) -> Balance {
+            self.get_contract_balance() - self.get_total_debts()
+        }
+
+        /// get list of unclaimed beneficiaries
+        /// read-only
+        #[ink(message)]
+        pub fn get_unclaimed_beneficiaries(&self) -> Vec<AccountId> {
+            let claiming_period_block = self.get_current_block_period();
+
+            let mut unclaimed_beneficiaries = Vec::new();
+            for account_id in self.beneficiaries_accounts.iter() {
+                let beneficiary = self.beneficiaries.get(account_id).unwrap();
+                if beneficiary.last_claimed_period_block < claiming_period_block {
+                    unclaimed_beneficiaries.push(beneficiary.account_id);
+                }
+            }
+
+            unclaimed_beneficiaries
+        }
+
+        /// get count of unclaimed beneficiaries
+        /// read-only
+        #[ink(message)]
+        pub fn get_count_of_unclaim_beneficiaries(&self) -> u8 {
+            let claiming_period_block = self.get_current_block_period();
+            let mut total: u8 = 0;
+            for account_id in self.beneficiaries_accounts.iter() {
+                let beneficiary = self.beneficiaries.get(account_id).unwrap();
+                if beneficiary.last_claimed_period_block < claiming_period_block {
+                    total += 1;
+                }
+            }
+
+            total
+        }
     }
 
+    /*
+    TODO: make tests for read-only functions
+
+    Debts of past periods->balance
+    Next period amount->balance
+    next period payees->list of payees
+    balance -.debts - next period amount	->balance
+    payee next period	->balance
+    */
+
+    /// ---------------------------------------------------------------
+    ///
+    ///
+    ///
+    ///    Test Cases
+    ///
+    ///
+    ///
+    /// ---------------------------------------------------------------
     #[cfg(test)]
     mod tests {
         use ink::env::{test::DefaultAccounts, DefaultEnvironment};
@@ -421,11 +700,11 @@ mod open_payroll {
             set_balance(contract_id(), initial_balance);
             let beneficiary_bob = InitialBeneficiary {
                 account_id: accounts.bob,
-                multipliers: vec![100, 3],
+                multipliers: vec![(0, 100), (1, 3)],
             };
             let beneficiary_charlie = InitialBeneficiary {
                 account_id: accounts.charlie,
-                multipliers: vec![100, 3],
+                multipliers: vec![(0, 100), (1, 3)],
             };
             OpenPayroll::new(
                 2,
@@ -478,6 +757,16 @@ mod open_payroll {
                 .expect("Cannot get account balance")
         }
 
+        fn vec_to_btreemap(
+            vec: &Vec<(MultiplierId, Multiplier)>,
+        ) -> BTreeMap<MultiplierId, Multiplier> {
+            let mut btree_map = BTreeMap::new();
+            for (id, multiplier) in vec.iter() {
+                btree_map.insert(*id, *multiplier);
+            }
+            btree_map
+        }
+
         /// We test if the default constructor does its job.
         #[ink::test]
         fn default_works() {
@@ -487,15 +776,95 @@ mod open_payroll {
         }
 
         #[ink::test]
+        fn create_contract_ok() {
+            let accounts = default_accounts();
+            let beneficiary_bob = InitialBeneficiary {
+                account_id: accounts.bob,
+                multipliers: vec![(0, 100), (1, 3)],
+            };
+            let beneficiary_charlie = InitialBeneficiary {
+                account_id: accounts.charlie,
+                multipliers: vec![(0, 100), (1, 10)],
+            };
+            let res = OpenPayroll::new(
+                2,
+                1000,
+                vec!["Seniority".to_string(), "Performance".to_string()],
+                vec![beneficiary_bob, beneficiary_charlie],
+            );
+            assert!(matches!(res, Ok(_)));
+            let contract = res.unwrap();
+
+            // check that base_multipliers are set correctly
+            let data_0 = contract.base_multipliers.get(0).unwrap();
+            let data_1 = contract.base_multipliers.get(1).unwrap();
+            assert_eq!(
+                data_0,
+                BaseMultiplier {
+                    name: "Seniority".to_string(),
+                    deactivated_at: None,
+                }
+            );
+            assert_eq!(
+                data_1,
+                BaseMultiplier {
+                    name: "Performance".to_string(),
+                    deactivated_at: None,
+                }
+            );
+
+            // check that beneficiaries are set correctly
+            let data_bob = contract.beneficiaries.get(&accounts.bob).unwrap();
+            let data_charlie = contract.beneficiaries.get(&accounts.charlie).unwrap();
+            assert_eq!(
+                data_bob,
+                Beneficiary {
+                    account_id: accounts.bob,
+                    multipliers: vec_to_btreemap(&vec![(0, 100), (1, 3)]),
+                    unclaimed_payments: 0,
+                    last_claimed_period_block: 0,
+                }
+            );
+            assert_eq!(
+                data_charlie,
+                Beneficiary {
+                    account_id: accounts.charlie,
+                    multipliers: vec_to_btreemap(&vec![(0, 100), (1, 10)]),
+                    unclaimed_payments: 0,
+                    last_claimed_period_block: 0,
+                }
+            );
+
+            // check accounts are set correctly
+            assert_eq!(
+                contract.beneficiaries_accounts.get(0).unwrap(),
+                &accounts.bob
+            );
+            assert_eq!(
+                contract.beneficiaries_accounts.get(1).unwrap(),
+                &accounts.charlie
+            );
+
+            // check claims in period are set correctly
+            assert_eq!(
+                contract.claims_in_period,
+                ClaimsInPeriod {
+                    period: 0,
+                    total_claims: 0,
+                }
+            );
+        }
+
+        #[ink::test]
         fn create_contract_with_invalid_amount_of_multipliers() {
             let accounts = default_accounts();
             let beneficiary_bob = InitialBeneficiary {
                 account_id: accounts.bob,
-                multipliers: vec![100, 3],
+                multipliers: vec![(0, 100), (1, 3)],
             };
             let beneficiary_charlie = InitialBeneficiary {
                 account_id: accounts.charlie,
-                multipliers: vec![100],
+                multipliers: vec![(0, 100)],
             };
             let res = OpenPayroll::new(
                 2,
@@ -508,11 +877,11 @@ mod open_payroll {
 
             let beneficiary_bob = InitialBeneficiary {
                 account_id: accounts.bob,
-                multipliers: vec![100],
+                multipliers: vec![(0, 100)],
             };
             let beneficiary_charlie = InitialBeneficiary {
                 account_id: accounts.charlie,
-                multipliers: vec![100],
+                multipliers: vec![(0, 100)],
             };
             let res = OpenPayroll::new(
                 2,
@@ -542,11 +911,11 @@ mod open_payroll {
 
             let beneficiary_bob = InitialBeneficiary {
                 account_id: accounts.bob,
-                multipliers: vec![10, 3, 3],
+                multipliers: vec![(0, 10), (1, 3), (2, 3)],
             };
             let beneficiary_charlie = InitialBeneficiary {
                 account_id: accounts.charlie,
-                multipliers: vec![10, 3],
+                multipliers: vec![(0, 10), (1, 3)],
             };
             let res = OpenPayroll::new(
                 2,
@@ -569,7 +938,7 @@ mod open_payroll {
             set_sender(accounts.alice);
             let mut contract = create_contract_with_no_beneficiaries(100_000_000u128);
             contract
-                .add_or_update_beneficiary(accounts.bob, vec![200, 100])
+                .add_or_update_beneficiary(accounts.bob, vec![(0, 200), (1, 100)])
                 .unwrap();
             assert_eq!(
                 contract
@@ -577,10 +946,10 @@ mod open_payroll {
                     .get(&accounts.bob)
                     .unwrap()
                     .multipliers,
-                vec![200, 100]
+                vec_to_btreemap(&vec![(0, 200), (1, 100)])
             );
             contract
-                .add_or_update_beneficiary(accounts.bob, vec![200, 50])
+                .add_or_update_beneficiary(accounts.bob, vec![(0, 200), (1, 50)])
                 .unwrap();
             assert_eq!(
                 contract
@@ -588,8 +957,9 @@ mod open_payroll {
                     .get(&accounts.bob)
                     .unwrap()
                     .multipliers,
-                vec![200, 50]
+                vec_to_btreemap(&vec![(0, 200), (1, 50)])
             );
+
             // check if account was added to the vector
             assert_eq!(
                 contract.beneficiaries_accounts.get(0).unwrap(),
@@ -605,7 +975,7 @@ mod open_payroll {
             let mut contract = create_contract_with_no_beneficiaries(100_000_000u128);
             set_sender(accounts.bob);
             assert!(matches!(
-                contract.add_or_update_beneficiary(accounts.bob, vec![100, 100]),
+                contract.add_or_update_beneficiary(accounts.bob, vec![(0, 100), (1, 100)]),
                 Err(Error::NotOwner)
             ));
             // check if account was NOT added to the vector
@@ -614,13 +984,13 @@ mod open_payroll {
 
         /// Add a new beneficiary and fails because the multiplies is 0
         #[ink::test]
-        fn add_beneficiary_invalid_multiplier() {
+        fn add_beneficiary_with_no_multipliers() {
             let accounts = default_accounts();
             set_sender(accounts.alice);
             let mut contract = create_contract_with_no_beneficiaries(100_000_000u128);
             assert!(matches!(
                 contract.add_or_update_beneficiary(accounts.bob, vec![]),
-                Err(Error::InvalidParams)
+                Ok(_)
             ));
         }
 
@@ -631,7 +1001,7 @@ mod open_payroll {
             set_sender(accounts.alice);
             let mut contract = create_contract_with_no_beneficiaries(100_000_000u128);
             contract
-                .add_or_update_beneficiary(accounts.bob, vec![100, 20])
+                .add_or_update_beneficiary(accounts.bob, vec![(0, 100), (1, 20)])
                 .unwrap();
             assert_eq!(contract.beneficiaries_accounts.len(), 1);
             assert_eq!(
@@ -644,7 +1014,7 @@ mod open_payroll {
                     .get(&accounts.bob)
                     .unwrap()
                     .multipliers,
-                vec![100, 20]
+                vec_to_btreemap(&vec![(0, 100), (1, 20)])
             );
             contract.remove_beneficiary(accounts.bob).unwrap();
             assert_eq!(contract.beneficiaries.contains(&accounts.bob), false);
@@ -659,7 +1029,7 @@ mod open_payroll {
             set_sender(accounts.alice);
             let mut contract = create_contract_with_no_beneficiaries(100_000_000u128);
             contract
-                .add_or_update_beneficiary(accounts.bob, vec![100, 20])
+                .add_or_update_beneficiary(accounts.bob, vec![(0, 100), (1, 20)])
                 .unwrap();
             set_sender(accounts.bob);
             assert!(matches!(
@@ -816,7 +1186,7 @@ mod open_payroll {
             set_sender(accounts.alice);
             let mut contract = create_contract(100_000_000u128, &accounts);
             contract
-                .add_or_update_beneficiary(accounts.bob, vec![100, 20])
+                .add_or_update_beneficiary(accounts.bob, vec![(0, 100), (1, 20)])
                 .unwrap();
             // advance 3 blocks so a payment will be claimable
             advance_n_blocks(3);
@@ -842,7 +1212,7 @@ mod open_payroll {
             set_sender(accounts.alice);
             let mut contract = create_contract(total_amount, &accounts);
             contract
-                .add_or_update_beneficiary(accounts.bob, vec![100, 20])
+                .add_or_update_beneficiary(accounts.bob, vec![(0, 100), (1, 20)])
                 .unwrap();
 
             // advance 3 blocks so a payment will be claimable
@@ -880,7 +1250,7 @@ mod open_payroll {
             set_sender(accounts.alice);
             let mut contract = create_contract(total_amount, &accounts);
             contract
-                .add_or_update_beneficiary(accounts.bob, vec![100, 20])
+                .add_or_update_beneficiary(accounts.bob, vec![(0, 100), (1, 20)])
                 .unwrap();
 
             // advance 3 blocks so a payment will be claimable
@@ -906,7 +1276,7 @@ mod open_payroll {
             set_sender(accounts.alice);
             let mut contract = create_contract(100_000_000u128, &accounts);
             contract
-                .add_or_update_beneficiary(accounts.bob, vec![100, 20])
+                .add_or_update_beneficiary(accounts.bob, vec![(0, 100), (1, 20)])
                 .unwrap();
 
             // advance 3 blocks so a payment will be claimable
@@ -922,7 +1292,7 @@ mod open_payroll {
             set_sender(accounts.alice);
             let mut contract = create_contract_with_no_beneficiaries(100_000_000u128);
             contract
-                .add_or_update_beneficiary(accounts.bob, vec![100, 20])
+                .add_or_update_beneficiary(accounts.bob, vec![(0, 100), (1, 20)])
                 .unwrap();
             // advance 3 blocks so a payment will be claimable
             advance_n_blocks(3);
@@ -941,7 +1311,7 @@ mod open_payroll {
             set_sender(accounts.alice);
             let mut contract = create_contract_with_no_beneficiaries(100_000_000u128);
             contract
-                .add_or_update_beneficiary(accounts.bob, vec![100, 20])
+                .add_or_update_beneficiary(accounts.bob, vec![(0, 100), (1, 20)])
                 .unwrap();
             // advance 3 blocks so a payment will be claimable
             advance_n_blocks(3);
@@ -965,7 +1335,7 @@ mod open_payroll {
             set_sender(accounts.alice);
             let mut contract = create_contract_with_no_beneficiaries(100_000_000u128);
             contract
-                .add_or_update_beneficiary(accounts.bob, vec![100, 20])
+                .add_or_update_beneficiary(accounts.bob, vec![(0, 100), (1, 20)])
                 .unwrap();
             // advance 3 blocks so a payment will be claimable
             advance_n_blocks(3);
@@ -981,7 +1351,7 @@ mod open_payroll {
             set_sender(accounts.alice);
             let mut contract = create_contract_with_no_beneficiaries(100_000_000u128);
             contract
-                .add_or_update_beneficiary(accounts.bob, vec![100, 20])
+                .add_or_update_beneficiary(accounts.bob, vec![(0, 100), (1, 20)])
                 .unwrap();
             // advance 3 blocks so a payment will be claimable
             advance_n_blocks(3);
@@ -1016,7 +1386,7 @@ mod open_payroll {
             let mut contract = create_contract(100_000_000u128, &accounts);
 
             contract
-                .add_or_update_beneficiary(accounts.bob, vec![100, 20])
+                .add_or_update_beneficiary(accounts.bob, vec![(0, 100), (1, 20)])
                 .unwrap();
 
             //check if multipliers are ok
@@ -1026,7 +1396,7 @@ mod open_payroll {
                     .get(accounts.bob)
                     .unwrap()
                     .multipliers,
-                vec![100, 20]
+                vec_to_btreemap(&vec![(0, 100), (1, 20)])
             );
             assert_eq!(
                 contract
@@ -1034,10 +1404,29 @@ mod open_payroll {
                     .get(accounts.charlie)
                     .unwrap()
                     .multipliers,
-                vec![100, 3]
+                vec_to_btreemap(&vec![(0, 100), (1, 3)])
             );
         }
 
-        // TODO: delete a multiplier
+        // Delete a multiplier
+        #[ink::test]
+        fn test_deactivate_multiplier() {
+            let accounts = default_accounts();
+            set_sender(accounts.alice);
+            let mut contract = create_contract(100_000_000u128, &accounts);
+
+            advance_n_blocks(6);
+
+            let res = contract.deactivate_multiplier(1);
+
+            advance_n_blocks(5);
+
+            assert_eq!(res, Ok(()));
+
+            let multiplier_0 = contract.base_multipliers.get(0).unwrap();
+            let multiplier_1 = contract.base_multipliers.get(1).unwrap();
+            assert_eq!(multiplier_1.deactivated_at.unwrap(), 6);
+            assert_eq!(multiplier_0.deactivated_at, None);
+        }
     }
 }
