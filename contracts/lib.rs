@@ -1485,6 +1485,7 @@ mod open_payroll {
             assert_eq!(next_block_period, 6);
         }
 
+        /// Check the fn get_amount_to_claim
         #[ink::test]
         fn test_amount_beneficiaries() {
             let accounts = default_accounts();
@@ -1501,6 +1502,7 @@ mod open_payroll {
             assert_eq!(amount_beneficiaries, 0);
         }
 
+        /// check for the fn get_list_payees
         #[ink::test]
         fn test_list_payees() {
             let accounts = default_accounts();
@@ -1516,6 +1518,7 @@ mod open_payroll {
             assert_eq!(list_payees, vec![]);
         }
 
+        // check for get_amount_to_claim and get_contract_balance
         #[ink::test]
         fn test_contract_balance() {
             let accounts = default_accounts();
@@ -1526,16 +1529,18 @@ mod open_payroll {
 
             advance_n_blocks(3);
 
+            // bob claims
             set_sender(accounts.bob);
-
             let amount_to_claim = contract.get_amount_to_claim(accounts.bob).unwrap();
             contract
                 .claim_payment(accounts.bob, amount_to_claim)
                 .unwrap();
 
+            // check final amount
             assert_eq!(contract.get_contract_balance(), 99998971u128);
         }
 
+        // check for get_unclaimed_beneficiaries and get_count_of_unclaim_beneficiaries
         #[ink::test]
         fn test_unclaimed_beneficiaries() {
             let accounts = default_accounts();
@@ -1556,6 +1561,7 @@ mod open_payroll {
             assert_eq!(unclaimed_beneficiaries, vec![]);
             assert_eq!(count_of_unclaim_beneficiaries, 0);
 
+            // in total 2 blocks to have beneficiaries that not claimed
             advance_n_blocks(1);
             let unclaimed_beneficiaries = contract.get_unclaimed_beneficiaries();
             let count_of_unclaim_beneficiaries = contract.get_count_of_unclaim_beneficiaries();
@@ -1565,8 +1571,8 @@ mod open_payroll {
             );
             assert_eq!(count_of_unclaim_beneficiaries, 2);
 
+            // claim bob and check
             set_sender(accounts.bob);
-
             let amount_to_claim = contract.get_amount_to_claim(accounts.bob).unwrap();
             contract
                 .claim_payment(accounts.bob, amount_to_claim)
@@ -1578,10 +1584,39 @@ mod open_payroll {
             assert_eq!(count_of_unclaim_beneficiaries, 1);
         }
 
-        /*
-        TODO TEST READONLY FUNCTIONS
-        pub fn get_total_debts(&self) -> Balance
-        pub fn get_balance_with_debts(&self) -> Balance
-         */
+        /// Test get_total_debts and get_balance_with_debts
+        #[ink::test]
+        fn test_total_debts() {
+            let accounts = default_accounts();
+            set_sender(accounts.alice);
+
+            let mut contract = create_contract(100_000_001u128, &accounts);
+            let total_debts = contract.get_total_debts();
+            assert_eq!(total_debts, 0);
+            assert_eq!(contract.get_balance_with_debts(), 100000001);
+
+            // goto next period so can beneficiaries can claim
+            advance_n_blocks(2);
+            let bob_amount_claim = contract.get_amount_to_claim(accounts.bob).unwrap();
+            let charlie_amount_claim = contract.get_amount_to_claim(accounts.charlie).unwrap();
+            let total_debts = contract.get_total_debts();
+            assert_eq!(total_debts, 2060);
+            assert_eq!(total_debts, bob_amount_claim + charlie_amount_claim);
+            assert_eq!(
+                contract.get_balance_with_debts(),
+                100000001 - (bob_amount_claim + charlie_amount_claim)
+            );
+            // claim all and check if debt is 0
+            set_sender(accounts.bob);
+            contract
+                .claim_payment(accounts.bob, bob_amount_claim)
+                .unwrap();
+            set_sender(accounts.charlie);
+            contract
+                .claim_payment(accounts.charlie, charlie_amount_claim)
+                .unwrap();
+
+            assert_eq!(contract.get_total_debts(), 0);
+        }
     }
 }
