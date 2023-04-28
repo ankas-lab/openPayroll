@@ -576,14 +576,9 @@ mod open_payroll {
         /// read-only
         #[ink(message)]
         pub fn get_current_start_period_block(&self) -> BlockNumber {
-            println!("get_current_block_period");
-            println!("block_number: {}", self.env().block_number());
-            println!("initial_block: {}", self.initial_block);
-            println!("periodicity: {}", self.periodicity);
             let current_block = self.env().block_number();
             let claiming_period_block =
                 current_block - ((current_block - self.initial_block) % self.periodicity);
-            println!("claiming_period_block: {}", claiming_period_block);
             claiming_period_block
         }
 
@@ -1454,7 +1449,7 @@ mod open_payroll {
 
         // Check current block period
         #[ink::test]
-        fn test_check_current_start_period_block() {
+        fn test_current_start_period_block() {
             let accounts = default_accounts();
             set_sender(accounts.alice);
             let contract = create_contract_with_no_beneficiaries_periodicity(100_000_000u128, 3);
@@ -1476,16 +1471,117 @@ mod open_payroll {
             assert_eq!(current_block_period, 9);
         }
 
+        // Check the fn next_block_period
+        #[ink::test]
+        fn test_next_block_period() {
+            let accounts = default_accounts();
+            set_sender(accounts.alice);
+            let contract = create_contract_with_no_beneficiaries_periodicity(100_000_000u128, 3);
+            let next_block_period = contract.get_next_block_period();
+            assert_eq!(next_block_period, 3);
+
+            advance_n_blocks(4);
+            let next_block_period = contract.get_next_block_period();
+            assert_eq!(next_block_period, 6);
+        }
+
+        #[ink::test]
+        fn test_amount_beneficiaries() {
+            let accounts = default_accounts();
+            set_sender(accounts.alice);
+
+            let contract = create_contract(100_000_000u128, &accounts);
+
+            let amount_beneficiaries = contract.get_amount_beneficiaries();
+            assert_eq!(amount_beneficiaries, 2);
+
+            let contract = create_contract_with_no_beneficiaries(100_000_000u128);
+
+            let amount_beneficiaries = contract.get_amount_beneficiaries();
+            assert_eq!(amount_beneficiaries, 0);
+        }
+
+        #[ink::test]
+        fn test_list_payees() {
+            let accounts = default_accounts();
+            set_sender(accounts.alice);
+
+            let contract = create_contract(100_000_000u128, &accounts);
+
+            let list_payees = contract.get_list_payees();
+            assert_eq!(list_payees, vec![accounts.bob, accounts.charlie]);
+
+            let contract = create_contract_with_no_beneficiaries_periodicity(100_000_000u128, 3);
+            let list_payees = contract.get_list_payees();
+            assert_eq!(list_payees, vec![]);
+        }
+
+        #[ink::test]
+        fn test_contract_balance() {
+            let accounts = default_accounts();
+            set_sender(accounts.alice);
+
+            let mut contract = create_contract(100_000_001u128, &accounts);
+            assert_eq!(contract.get_contract_balance(), 100_000_001u128);
+
+            advance_n_blocks(3);
+
+            set_sender(accounts.bob);
+
+            let amount_to_claim = contract.get_amount_to_claim(accounts.bob).unwrap();
+            contract
+                .claim_payment(accounts.bob, amount_to_claim)
+                .unwrap();
+
+            assert_eq!(contract.get_contract_balance(), 99998971u128);
+        }
+
+        #[ink::test]
+        fn test_unclaimed_beneficiaries() {
+            let accounts = default_accounts();
+            set_sender(accounts.alice);
+
+            let mut contract = create_contract(100_000_001u128, &accounts);
+
+            let unclaimed_beneficiaries = contract.get_unclaimed_beneficiaries();
+            let count_of_unclaim_beneficiaries = contract.get_count_of_unclaim_beneficiaries();
+
+            assert_eq!(unclaimed_beneficiaries, vec![]);
+            assert_eq!(count_of_unclaim_beneficiaries, 0);
+
+            advance_n_blocks(1);
+            let unclaimed_beneficiaries = contract.get_unclaimed_beneficiaries();
+            let count_of_unclaim_beneficiaries = contract.get_count_of_unclaim_beneficiaries();
+
+            assert_eq!(unclaimed_beneficiaries, vec![]);
+            assert_eq!(count_of_unclaim_beneficiaries, 0);
+
+            advance_n_blocks(1);
+            let unclaimed_beneficiaries = contract.get_unclaimed_beneficiaries();
+            let count_of_unclaim_beneficiaries = contract.get_count_of_unclaim_beneficiaries();
+            assert_eq!(
+                unclaimed_beneficiaries,
+                vec![accounts.bob, accounts.charlie]
+            );
+            assert_eq!(count_of_unclaim_beneficiaries, 2);
+
+            set_sender(accounts.bob);
+
+            let amount_to_claim = contract.get_amount_to_claim(accounts.bob).unwrap();
+            contract
+                .claim_payment(accounts.bob, amount_to_claim)
+                .unwrap();
+
+            let unclaimed_beneficiaries = contract.get_unclaimed_beneficiaries();
+            let count_of_unclaim_beneficiaries = contract.get_count_of_unclaim_beneficiaries();
+            assert_eq!(unclaimed_beneficiaries, vec![accounts.charlie]);
+            assert_eq!(count_of_unclaim_beneficiaries, 1);
+        }
+
         /*
         TODO TEST READONLY FUNCTIONS
-        pub fn get_next_block_period(&self) -> BlockNumber
         pub fn get_total_debts(&self) -> Balance
-        pub fn get_amount_beneficiaries(&self) -> u8
-        pub fn get_list_payees(&self) -> Vec<AccountId>
-        pub fn get_contract_balance(&self) -> Balance
         pub fn get_balance_with_debts(&self) -> Balance
-        pub fn get_unclaimed_beneficiaries(&self) -> Vec<AccountId>
-        pub fn get_count_of_unclaim_beneficiaries(&self) -> u8
          */
     }
 }
