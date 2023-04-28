@@ -17,13 +17,13 @@ mod open_payroll {
     #[cfg_attr(feature = "std", derive(scale_info::TypeInfo, StorageLayout))]
     pub struct BaseMultiplier {
         name: String,
-        deactivated_at: Option<BlockNumber>,
+        valid_until_block: Option<BlockNumber>,
     }
     impl BaseMultiplier {
         pub fn new(name: String) -> Self {
             Self {
                 name,
-                deactivated_at: None,
+                valid_until_block: None,
             }
         }
     }
@@ -165,12 +165,13 @@ mod open_payroll {
                 .base_multipliers
                 .get(&multiplier_id)
                 .ok_or(Error::MultiplierNotFound)?;
-            if multiplier.deactivated_at.is_some() {
+            if multiplier.valid_until_block.is_some() {
                 return Err(Error::MultiplierAlreadyDeactivated);
             }
-            let claiming_period_block = self.get_current_block_period();
 
-            multiplier.deactivated_at = Some(claiming_period_block);
+            let valid_until_block = self.get_current_start_period_block() + self.periodicity;
+
+            multiplier.valid_until_block = Some(valid_until_block);
             self.base_multipliers.insert(multiplier_id, &multiplier);
 
             Ok(())
@@ -178,19 +179,22 @@ mod open_payroll {
 
         //TODO: Call this function from somewhere
         fn delete_unused_multiplier(&mut self, multiplier_id: MultiplierId) -> Result<(), Error> {
+            let current_block = self.env().block_number();
             let multiplier = self
                 .base_multipliers
                 .get(&multiplier_id)
                 .ok_or(Error::MultiplierNotFound)?;
-            if multiplier.deactivated_at.is_none() {
+
+            if multiplier.valid_until_block.is_none() {
                 return Err(Error::MultiplierNotDeactivated);
+            }
+
+            if current_block > multiplier.valid_until_block.unwrap() {
+                return Err(Error::MultiplierNotExpired);
             }
 
             self.ensure_all_claimed_in_period()?;
 
-            if !(multiplier.deactivated_at.unwrap() < self.claims_in_period.period) {
-                return Err(Error::MultiplierNotDeactivated);
-            }
             // Remove multiplier from multipliers_list
             self.multipliers_list.retain(|x| *x != multiplier_id);
 
@@ -234,7 +238,7 @@ mod open_payroll {
                     .base_multipliers
                     .get(multiplier_id)
                     .unwrap()
-                    .deactivated_at
+                    .valid_until_block
                     .is_some()
                 {
                     return Err(Error::MultiplierAlreadyDeactivated);
@@ -405,7 +409,7 @@ mod open_payroll {
                             self.base_multipliers
                                 .get(k)
                                 .unwrap()
-                                .deactivated_at
+                                .valid_until_block
                                 .is_none()
                         })
                         .map(|(_, v)| v)
@@ -452,7 +456,7 @@ mod open_payroll {
                 self.base_multipliers
                     .get(&k)
                     .unwrap()
-                    .deactivated_at
+                    .valid_until_block
                     .is_none()
             });
 
@@ -466,7 +470,7 @@ mod open_payroll {
                 return Err(Error::NotEnoughBalanceInTreasury);
             }
 
-            let claiming_period_block = self.get_current_block_period();
+            let claiming_period_block = self.get_current_start_period_block();
 
             // If the beneficiary has not claimed anything in the current period
             if beneficiary.last_claimed_period_block != claiming_period_block {
@@ -505,7 +509,7 @@ mod open_payroll {
         }
 
         fn ensure_all_claimed_in_period(&mut self) -> Result<(), Error> {
-            let claiming_period_block = self.get_current_block_period();
+            let claiming_period_block = self.get_current_start_period_block();
 
             let claims_in_period = self.claims_in_period.clone();
 
@@ -571,24 +575,29 @@ mod open_payroll {
         /// get current block period
         /// read-only
         #[ink(message)]
-        pub fn get_current_block_period(&self) -> BlockNumber {
+        pub fn get_current_start_period_block(&self) -> BlockNumber {
+            println!("get_current_block_period");
+            println!("block_number: {}", self.env().block_number());
+            println!("initial_block: {}", self.initial_block);
+            println!("periodicity: {}", self.periodicity);
             let current_block = self.env().block_number();
             let claiming_period_block =
                 current_block - ((current_block - self.initial_block) % self.periodicity);
+            println!("claiming_period_block: {}", claiming_period_block);
             claiming_period_block
         }
 
         /// get next block period
         #[ink(message)]
         pub fn get_next_block_period(&self) -> BlockNumber {
-            self.get_current_block_period() + self.periodicity
+            self.get_current_start_period_block() + self.periodicity
         }
 
         /// get all the debts up-to-date
         /// read-only
         #[ink(message)]
         pub fn get_total_debts(&self) -> Balance {
-            let claiming_period_block = self.get_current_block_period();
+            let claiming_period_block = self.get_current_start_period_block();
 
             let mut debts = 0;
             for account_id in self.beneficiaries_accounts.iter() {
@@ -637,7 +646,7 @@ mod open_payroll {
         /// read-only
         #[ink(message)]
         pub fn get_unclaimed_beneficiaries(&self) -> Vec<AccountId> {
-            let claiming_period_block = self.get_current_block_period();
+            let claiming_period_block = self.get_current_start_period_block();
 
             let mut unclaimed_beneficiaries = Vec::new();
             for account_id in self.beneficiaries_accounts.iter() {
@@ -654,7 +663,7 @@ mod open_payroll {
         /// read-only
         #[ink(message)]
         pub fn get_count_of_unclaim_beneficiaries(&self) -> u8 {
-            let claiming_period_block = self.get_current_block_period();
+            let claiming_period_block = self.get_current_start_period_block();
             let mut total: u8 = 0;
             for account_id in self.beneficiaries_accounts.iter() {
                 let beneficiary = self.beneficiaries.get(account_id).unwrap();
@@ -719,6 +728,20 @@ mod open_payroll {
             set_balance(contract_id(), initial_balance);
             OpenPayroll::new(
                 2,
+                1000,
+                vec!["Seniority".to_string(), "Performance".to_string()],
+                vec![],
+            )
+            .expect("Cannot create contract")
+        }
+
+        fn create_contract_with_no_beneficiaries_periodicity(
+            initial_balance: Balance,
+            periodicity: u32,
+        ) -> OpenPayroll {
+            set_balance(contract_id(), initial_balance);
+            OpenPayroll::new(
+                periodicity,
                 1000,
                 vec!["Seniority".to_string(), "Performance".to_string()],
                 vec![],
@@ -802,14 +825,14 @@ mod open_payroll {
                 data_0,
                 BaseMultiplier {
                     name: "Seniority".to_string(),
-                    deactivated_at: None,
+                    valid_until_block: None,
                 }
             );
             assert_eq!(
                 data_1,
                 BaseMultiplier {
                     name: "Performance".to_string(),
-                    deactivated_at: None,
+                    valid_until_block: None,
                 }
             );
 
@@ -1425,8 +1448,44 @@ mod open_payroll {
 
             let multiplier_0 = contract.base_multipliers.get(0).unwrap();
             let multiplier_1 = contract.base_multipliers.get(1).unwrap();
-            assert_eq!(multiplier_1.deactivated_at.unwrap(), 6);
-            assert_eq!(multiplier_0.deactivated_at, None);
+            assert_eq!(multiplier_1.valid_until_block.unwrap(), 8);
+            assert_eq!(multiplier_0.valid_until_block, None);
         }
+
+        // Check current block period
+        #[ink::test]
+        fn test_check_current_start_period_block() {
+            let accounts = default_accounts();
+            set_sender(accounts.alice);
+            let contract = create_contract_with_no_beneficiaries_periodicity(100_000_000u128, 3);
+
+            advance_n_blocks(6);
+            let current_block_period = contract.get_current_start_period_block();
+            assert_eq!(current_block_period, 6);
+
+            advance_n_blocks(1);
+            let current_block_period = contract.get_current_start_period_block();
+            assert_eq!(current_block_period, 6);
+
+            advance_n_blocks(1);
+            let current_block_period = contract.get_current_start_period_block();
+            assert_eq!(current_block_period, 6);
+
+            advance_n_blocks(1);
+            let current_block_period = contract.get_current_start_period_block();
+            assert_eq!(current_block_period, 9);
+        }
+
+        /*
+        TODO TEST READONLY FUNCTIONS
+        pub fn get_next_block_period(&self) -> BlockNumber
+        pub fn get_total_debts(&self) -> Balance
+        pub fn get_amount_beneficiaries(&self) -> u8
+        pub fn get_list_payees(&self) -> Vec<AccountId>
+        pub fn get_contract_balance(&self) -> Balance
+        pub fn get_balance_with_debts(&self) -> Balance
+        pub fn get_unclaimed_beneficiaries(&self) -> Vec<AccountId>
+        pub fn get_count_of_unclaim_beneficiaries(&self) -> u8
+         */
     }
 }
