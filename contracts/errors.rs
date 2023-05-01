@@ -31,4 +31,6 @@ pub enum Error {
     MultiplierNotDeactivated,
     // There are duplicated multipliers
     DuplicatedMultipliers,
+    // The multiplier is not expired yet
+    MultiplierNotExpired,
 }
