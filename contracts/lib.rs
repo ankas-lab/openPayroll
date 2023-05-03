@@ -1728,7 +1728,5 @@ mod open_payroll {
             assert_eq!(total_debts_with_unclaimed, 2060);
             assert_eq!(total_debts, 2060);
         }
-
-        // contract._get_amount_to_claim_for_one_period(beneficiary, filtered_multipliers)
     }
 }
