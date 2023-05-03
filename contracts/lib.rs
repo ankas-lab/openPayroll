@@ -376,18 +376,18 @@ mod open_payroll {
             Ok(())
         }
 
-        /// Filtered multipliers in true means that all multipliers are active
-        fn _get_amount_to_claim(
+        /// Get the amount of tokens that can be claimed by a beneficiary with specific block_numer
+        fn _get_amount_to_claim_in_block(
             &self,
             account_id: AccountId,
             filtered_multipliers: bool,
+            block: BlockNumber,
         ) -> Result<Balance, Error> {
             // The check that beneficiary exists is done in the caller function
             let beneficiary = self.beneficiaries.get(&account_id).unwrap();
-            let current_block = self.env().block_number();
 
             // Calculates the number of blocks that have elapsed since the last payment
-            let blocks_since_last_payment = current_block - beneficiary.last_claimed_period_block;
+            let blocks_since_last_payment = block - beneficiary.last_claimed_period_block;
 
             // Calculates the number of payments that are due based on the elapsed blocks
             let unclaimed_periods: u128 = (blocks_since_last_payment / self.periodicity).into();
@@ -395,6 +395,20 @@ mod open_payroll {
                 return Err(Error::NoUnclaimedPayments);
             }
 
+            let payment_per_period =
+                self._get_amount_to_claim_for_one_period(&beneficiary, filtered_multipliers);
+
+            let total_payment =
+                payment_per_period * unclaimed_periods as u128 + beneficiary.unclaimed_payments;
+
+            Ok(total_payment)
+        }
+
+        fn _get_amount_to_claim_for_one_period(
+            &self,
+            beneficiary: &Beneficiary,
+            filtered_multipliers: bool,
+        ) -> Balance {
             // E.g (M1 + M2) * B / 100
             // Sum all active multipliers
             let final_multiplier: u128 = if beneficiary.multipliers.is_empty() {
@@ -417,11 +431,18 @@ mod open_payroll {
                 }
             };
 
-            let payment_per_period: Balance = final_multiplier * self.base_payment / 100;
-            let total_payment =
-                payment_per_period * unclaimed_periods as u128 + beneficiary.unclaimed_payments;
+            final_multiplier * self.base_payment / 100
+        }
 
-            Ok(total_payment)
+        /// Filtered multipliers in true means that all multipliers are active
+        fn _get_amount_to_claim(
+            &self,
+            account_id: AccountId,
+            filtered_multipliers: bool,
+        ) -> Result<Balance, Error> {
+            let current_block = self.env().block_number();
+
+            self._get_amount_to_claim_in_block(account_id, filtered_multipliers, current_block)
         }
 
         /// Get amount in storage without transferring the funds
@@ -609,6 +630,40 @@ mod open_payroll {
             debts
         }
 
+        /// get all the debts up-to-date
+        /// read-only
+        #[ink(message)]
+        pub fn get_total_debt_for_next_period(&self) -> Balance {
+            let mut total = 0;
+            for account_id in self.beneficiaries_accounts.iter() {
+                let beneficiary = self.beneficiaries.get(account_id).unwrap();
+                let amount = self._get_amount_to_claim_for_one_period(&beneficiary, false);
+                total += amount;
+            }
+
+            total
+        }
+
+        /// get all the debts up-to-date
+        /// read-only
+        #[ink(message)]
+        pub fn get_total_debt_with_unclaimed_for_next_period(&self) -> Balance {
+            let block_next_period = self.get_next_block_period();
+
+            let mut total = 0;
+            for account_id in self.beneficiaries_accounts.iter() {
+                let amount =
+                    match self._get_amount_to_claim_in_block(*account_id, false, block_next_period)
+                    {
+                        Ok(amount) => amount,
+                        Err(_) => 0,
+                    };
+                total += amount;
+            }
+
+            total
+        }
+
         // count of beneficiaries
         /// read-only
         #[ink(message)]
@@ -676,7 +731,6 @@ mod open_payroll {
 
     Debts of past periods->balance
     Next period amount->balance
-    next period payees->list of payees
     balance -.debts - next period amount	->balance
     payee next period	->balance
     */
@@ -1618,5 +1672,63 @@ mod open_payroll {
 
             assert_eq!(contract.get_total_debts(), 0);
         }
+
+        /// Test test_total_debt_with_unclaimed_for_next_period and get_total_debt_for_next_period
+        #[ink::test]
+        fn test_total_debt_with_unclaimed_for_next_period() {
+            let accounts = default_accounts();
+            set_sender(accounts.alice);
+
+            let mut contract = create_contract(100_000_001u128, &accounts);
+            let total_debts = contract.get_total_debt_with_unclaimed_for_next_period();
+            assert_eq!(total_debts, 2060);
+            assert_eq!(contract.get_balance_with_debts(), 100000001);
+
+            // goto next period so can beneficiaries can claim
+            advance_n_blocks(2);
+
+            let bob_amount_claim = contract
+                ._get_amount_to_claim_in_block(accounts.bob, false, get_current_block())
+                .unwrap();
+            let charlie_amount_claim = contract
+                ._get_amount_to_claim_in_block(accounts.charlie, false, get_current_block())
+                .unwrap();
+            let charlie_amount_claim_next_period = contract
+                ._get_amount_to_claim_in_block(accounts.charlie, false, get_current_block() + 2)
+                .unwrap();
+            let total_debts_with_unclaimed =
+                contract.get_total_debt_with_unclaimed_for_next_period();
+            let total_debts = contract.get_total_debt_for_next_period();
+
+            let beneficiary_charlie = contract.beneficiaries.get(&accounts.charlie).unwrap();
+            let amount_claim_one_period_charlie =
+                contract._get_amount_to_claim_for_one_period(&beneficiary_charlie, false);
+            assert_eq!(total_debts_with_unclaimed, 4120);
+            assert_eq!(
+                total_debts_with_unclaimed,
+                (bob_amount_claim + charlie_amount_claim) * 2
+            );
+            assert_eq!(total_debts, 2060);
+            assert_eq!(charlie_amount_claim_next_period, charlie_amount_claim * 2);
+            assert_eq!(amount_claim_one_period_charlie, 1030);
+            // claim all and check if debt is 0
+            set_sender(accounts.bob);
+            contract
+                .claim_payment(accounts.bob, bob_amount_claim)
+                .unwrap();
+            set_sender(accounts.charlie);
+            contract
+                .claim_payment(accounts.charlie, charlie_amount_claim)
+                .unwrap();
+
+            assert_eq!(contract.get_total_debts(), 0);
+            let total_debts_with_unclaimed =
+                contract.get_total_debt_with_unclaimed_for_next_period();
+            let total_debts = contract.get_total_debt_for_next_period();
+            assert_eq!(total_debts_with_unclaimed, 2060);
+            assert_eq!(total_debts, 2060);
+        }
+
+        // contract._get_amount_to_claim_for_one_period(beneficiary, filtered_multipliers)
     }
 }
