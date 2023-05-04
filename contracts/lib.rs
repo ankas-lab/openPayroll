@@ -404,6 +404,8 @@ mod open_payroll {
             Ok(total_payment)
         }
 
+        /// check the amount to claim for one beneficiary in any period
+        /// without unclaimed payments
         fn _get_amount_to_claim_for_one_period(
             &self,
             beneficiary: &Beneficiary,
@@ -798,6 +800,19 @@ mod open_payroll {
             .expect("Cannot create contract")
         }
 
+        fn create_accounts_and_contract(
+            initial_balance: Balance,
+        ) -> (
+            ink::env::test::DefaultAccounts<ink::env::DefaultEnvironment>,
+            OpenPayroll,
+        ) {
+            let accounts = default_accounts();
+            set_sender(accounts.alice);
+
+            let contract = create_contract(initial_balance, &accounts);
+            (accounts, contract)
+        }
+
         fn contract_id() -> AccountId {
             ink::env::test::callee::<ink::env::DefaultEnvironment>()
         }
@@ -1130,9 +1145,7 @@ mod open_payroll {
         /// Update the base payment and check that it is updated
         #[ink::test]
         fn update_base_payment_in_initial_block() {
-            let accounts = default_accounts();
-            set_sender(accounts.alice);
-            let mut contract = create_contract(100_000_000u128, &accounts);
+            let (_, mut contract) = create_accounts_and_contract(100_000_000u128);
             contract.update_base_payment(200_000_000u128).unwrap();
             assert_eq!(contract.base_payment, 200_000_000u128);
         }
@@ -1140,9 +1153,7 @@ mod open_payroll {
         /// Update the base payment and check that it is updated
         #[ink::test]
         fn update_base_payment() {
-            let accounts = default_accounts();
-            set_sender(accounts.alice);
-            let mut contract = create_contract(100_000_000u128, &accounts);
+            let (_, mut contract) = create_accounts_and_contract(100_000_000u128);
 
             advance_n_blocks(1);
 
@@ -1152,9 +1163,7 @@ mod open_payroll {
 
         #[ink::test]
         fn update_base_payment_error() {
-            let accounts = default_accounts();
-            set_sender(accounts.alice);
-            let mut contract = create_contract(100_000_000u128, &accounts);
+            let (_, mut contract) = create_accounts_and_contract(100_000_000u128);
 
             advance_n_blocks(3);
 
@@ -1167,9 +1176,7 @@ mod open_payroll {
         /// Update the base payment but fails because the sender is not the owner
         #[ink::test]
         fn update_base_payment_without_access() {
-            let accounts = default_accounts();
-            set_sender(accounts.alice);
-            let mut contract = create_contract(100_000_000u128, &accounts);
+            let (accounts, mut contract) = create_accounts_and_contract(100_000_000u128);
             set_sender(accounts.bob);
             assert!(matches!(
                 contract.update_base_payment(200_000_000u128),
@@ -1180,9 +1187,7 @@ mod open_payroll {
         /// Update the base payment but fails because the base payment is 0
         #[ink::test]
         fn update_base_payment_invalid_base_payment() {
-            let accounts = default_accounts();
-            set_sender(accounts.alice);
-            let mut contract = create_contract(100_000_000u128, &accounts);
+            let (_, mut contract) = create_accounts_and_contract(100_000_000u128);
             assert!(matches!(
                 contract.update_base_payment(0u128),
                 Err(Error::InvalidParams)
@@ -1192,9 +1197,7 @@ mod open_payroll {
         /// Update the periodicity and check that it is updated
         #[ink::test]
         fn update_periodicity() {
-            let accounts = default_accounts();
-            set_sender(accounts.alice);
-            let mut contract = create_contract(100_000_000u128, &accounts);
+            let (_, mut contract) = create_accounts_and_contract(100_000_000u128);
             contract.update_periodicity(100u32).unwrap();
             assert_eq!(contract.periodicity, 100u32);
         }
@@ -1202,9 +1205,7 @@ mod open_payroll {
         /// Update the periodicity but fails because the sender is not the owner
         #[ink::test]
         fn update_periodicity_without_access() {
-            let accounts = default_accounts();
-            set_sender(accounts.alice);
-            let mut contract = create_contract(100_000_000u128, &accounts);
+            let (accounts, mut contract) = create_accounts_and_contract(100_000_000u128);
             set_sender(accounts.bob);
             assert!(matches!(
                 contract.update_periodicity(100u32),
@@ -1215,9 +1216,8 @@ mod open_payroll {
         /// Update the periodicity but fails because the periodicity is 0
         #[ink::test]
         fn update_periodicity_invalid_periodicity() {
-            let accounts = default_accounts();
-            set_sender(accounts.alice);
-            let mut contract = create_contract(100_000_000u128, &accounts);
+            let (_, mut contract) = create_accounts_and_contract(100_000_000u128);
+
             assert!(matches!(
                 contract.update_periodicity(0u32),
                 Err(Error::InvalidParams)
@@ -1227,10 +1227,9 @@ mod open_payroll {
         /// Test pausing and unpausing the contract
         #[ink::test]
         fn pause_and_resume() {
-            let accounts = default_accounts();
-            set_sender(accounts.alice);
             let starting_block = get_current_block();
-            let mut contract = create_contract(100_000_000u128, &accounts);
+            let (_, mut contract) = create_accounts_and_contract(100_000_000u128);
+
             contract.pause().unwrap();
             assert_eq!(contract.is_paused(), true);
             advance_n_blocks(1);
@@ -1243,9 +1242,7 @@ mod open_payroll {
         /// Test pausing and resuming without access
         #[ink::test]
         fn pause_and_resume_without_access() {
-            let accounts = default_accounts();
-            set_sender(accounts.alice);
-            let mut contract = create_contract(100_000_000u128, &accounts);
+            let (accounts, mut contract) = create_accounts_and_contract(100_000_000u128);
             set_sender(accounts.bob);
             assert!(matches!(contract.pause(), Err(Error::NotOwner)));
             assert!(matches!(contract.resume(), Err(Error::NotOwner)));
@@ -1254,9 +1251,7 @@ mod open_payroll {
         /// Test claiming a payment
         #[ink::test]
         fn claim_payment() {
-            let accounts = default_accounts();
-            set_sender(accounts.alice);
-            let mut contract = create_contract(100_000_000u128, &accounts);
+            let (accounts, mut contract) = create_accounts_and_contract(100_000_000u128);
             contract
                 .add_or_update_beneficiary(accounts.bob, vec![(0, 100), (1, 20)])
                 .unwrap();
@@ -1278,11 +1273,9 @@ mod open_payroll {
         /// Test claiming a payment
         #[ink::test]
         fn claim_parcial_payment() {
-            let accounts = default_accounts();
             let total_amount = 100_000_000u128;
             let total_not_claimed = 10;
-            set_sender(accounts.alice);
-            let mut contract = create_contract(total_amount, &accounts);
+            let (accounts, mut contract) = create_accounts_and_contract(total_amount);
             contract
                 .add_or_update_beneficiary(accounts.bob, vec![(0, 100), (1, 20)])
                 .unwrap();
@@ -1317,10 +1310,8 @@ mod open_payroll {
         /// Test claiming a payment
         #[ink::test]
         fn claim_more_payment() {
-            let accounts = default_accounts();
             let total_amount = 100_000_000u128;
-            set_sender(accounts.alice);
-            let mut contract = create_contract(total_amount, &accounts);
+            let (accounts, mut contract) = create_accounts_and_contract(total_amount);
             contract
                 .add_or_update_beneficiary(accounts.bob, vec![(0, 100), (1, 20)])
                 .unwrap();
@@ -1344,9 +1335,7 @@ mod open_payroll {
 
         #[ink::test]
         fn update_periodicity_without_all_payments_updated() {
-            let accounts = default_accounts();
-            set_sender(accounts.alice);
-            let mut contract = create_contract(100_000_000u128, &accounts);
+            let (accounts, mut contract) = create_accounts_and_contract(100_000_000u128);
             contract
                 .add_or_update_beneficiary(accounts.bob, vec![(0, 100), (1, 20)])
                 .unwrap();
@@ -1442,9 +1431,7 @@ mod open_payroll {
 
         #[ink::test]
         fn create_contract_with_beneficiaries_ok() {
-            let accounts = default_accounts();
-            set_sender(accounts.alice);
-            let contract = create_contract(100_000_000u128, &accounts);
+            let (accounts, contract) = create_accounts_and_contract(100_000_000u128);
 
             assert_eq!(contract.beneficiaries_accounts.len(), 2);
             assert!(contract.beneficiaries.contains(accounts.bob));
@@ -1453,9 +1440,8 @@ mod open_payroll {
 
         #[ink::test]
         fn update_benefiaries_created_in_create_contract() {
-            let accounts = default_accounts();
-            set_sender(accounts.alice);
-            let mut contract = create_contract(100_000_000u128, &accounts);
+            let total_balance = 100_000_000u128;
+            let (accounts, mut contract) = create_accounts_and_contract(total_balance);
 
             contract
                 .add_or_update_beneficiary(accounts.bob, vec![(0, 100), (1, 20)])
@@ -1483,9 +1469,8 @@ mod open_payroll {
         // Delete a multiplier
         #[ink::test]
         fn test_deactivate_multiplier() {
-            let accounts = default_accounts();
-            set_sender(accounts.alice);
-            let mut contract = create_contract(100_000_000u128, &accounts);
+            let total_balance = 100_000_000u128;
+            let (_, mut contract) = create_accounts_and_contract(total_balance);
 
             advance_n_blocks(6);
 
@@ -1531,6 +1516,7 @@ mod open_payroll {
             let accounts = default_accounts();
             set_sender(accounts.alice);
             let contract = create_contract_with_no_beneficiaries_periodicity(100_000_000u128, 3);
+
             let next_block_period = contract.get_next_block_period();
             assert_eq!(next_block_period, 3);
 
@@ -1542,15 +1528,13 @@ mod open_payroll {
         /// Check the fn get_amount_to_claim
         #[ink::test]
         fn test_amount_beneficiaries() {
-            let accounts = default_accounts();
-            set_sender(accounts.alice);
-
-            let contract = create_contract(100_000_000u128, &accounts);
+            let total_balance = 100_000_000u128;
+            let (_, contract) = create_accounts_and_contract(total_balance);
 
             let amount_beneficiaries = contract.get_amount_beneficiaries();
             assert_eq!(amount_beneficiaries, 2);
 
-            let contract = create_contract_with_no_beneficiaries(100_000_000u128);
+            let contract = create_contract_with_no_beneficiaries(total_balance);
 
             let amount_beneficiaries = contract.get_amount_beneficiaries();
             assert_eq!(amount_beneficiaries, 0);
@@ -1559,15 +1543,13 @@ mod open_payroll {
         /// check for the fn get_list_payees
         #[ink::test]
         fn test_list_payees() {
-            let accounts = default_accounts();
-            set_sender(accounts.alice);
-
-            let contract = create_contract(100_000_000u128, &accounts);
+            let total_balance = 100_000_000u128;
+            let (accounts, contract) = create_accounts_and_contract(total_balance);
 
             let list_payees = contract.get_list_payees();
             assert_eq!(list_payees, vec![accounts.bob, accounts.charlie]);
 
-            let contract = create_contract_with_no_beneficiaries_periodicity(100_000_000u128, 3);
+            let contract = create_contract_with_no_beneficiaries_periodicity(total_balance, 3);
             let list_payees = contract.get_list_payees();
             assert_eq!(list_payees, vec![]);
         }
@@ -1575,11 +1557,10 @@ mod open_payroll {
         // check for get_amount_to_claim and get_contract_balance
         #[ink::test]
         fn test_contract_balance() {
-            let accounts = default_accounts();
-            set_sender(accounts.alice);
+            let total_balance = 100_000_001u128;
+            let (accounts, mut contract) = create_accounts_and_contract(total_balance);
 
-            let mut contract = create_contract(100_000_001u128, &accounts);
-            assert_eq!(contract.get_contract_balance(), 100_000_001u128);
+            assert_eq!(contract.get_contract_balance(), total_balance);
 
             advance_n_blocks(3);
 
@@ -1597,10 +1578,8 @@ mod open_payroll {
         // check for get_unclaimed_beneficiaries and get_count_of_unclaim_beneficiaries
         #[ink::test]
         fn test_unclaimed_beneficiaries() {
-            let accounts = default_accounts();
-            set_sender(accounts.alice);
-
-            let mut contract = create_contract(100_000_001u128, &accounts);
+            let total_balance = 100_000_001u128;
+            let (accounts, mut contract) = create_accounts_and_contract(total_balance);
 
             let unclaimed_beneficiaries = contract.get_unclaimed_beneficiaries();
             let count_of_unclaim_beneficiaries = contract.get_count_of_unclaim_beneficiaries();
@@ -1638,29 +1617,57 @@ mod open_payroll {
             assert_eq!(count_of_unclaim_beneficiaries, 1);
         }
 
-        /// Test get_total_debts and get_balance_with_debts
+        /// Test 1 readonly function related with total debts and balance
         #[ink::test]
-        fn test_total_debts() {
-            let accounts = default_accounts();
-            set_sender(accounts.alice);
-
-            let mut contract = create_contract(100_000_001u128, &accounts);
+        fn check_total_balance_and_debts_on_init() {
+            let total_balance = 100_000_001u128;
+            let (_, contract) = create_accounts_and_contract(100_000_001u128);
             let total_debts = contract.get_total_debts();
             assert_eq!(total_debts, 0);
-            assert_eq!(contract.get_balance_with_debts(), 100000001);
+            assert_eq!(contract.get_balance_with_debts(), total_balance);
+        }
+
+        /// Test 2 readonly function related with total debts and balance
+        /// fn: get_total_debts and get_balance_with_debts
+        ///
+        /// workaround: create a contract, advance 2 blocks for next period & check debts
+        #[ink::test]
+        fn check_total_debts_with_individual_debts() {
+            let total_balance = 100_000_001u128;
+            let (accounts, contract) = create_accounts_and_contract(total_balance);
 
             // goto next period so can beneficiaries can claim
             advance_n_blocks(2);
             let bob_amount_claim = contract.get_amount_to_claim(accounts.bob).unwrap();
             let charlie_amount_claim = contract.get_amount_to_claim(accounts.charlie).unwrap();
             let total_debts = contract.get_total_debts();
+
+            // check the specifi value and the sum of both individual debts
             assert_eq!(total_debts, 2060);
             assert_eq!(total_debts, bob_amount_claim + charlie_amount_claim);
+
+            // check if the balance with debts is correct (total_balance - total_debts)
             assert_eq!(
                 contract.get_balance_with_debts(),
-                100000001 - (bob_amount_claim + charlie_amount_claim)
+                total_balance - (bob_amount_claim + charlie_amount_claim)
             );
-            // claim all and check if debt is 0
+        }
+
+        /// Test 2 readonly function related with total debts and balance
+        /// fn: get_total_debts and get_balance_with_debts
+        ///
+        /// workaround: create a contract, advance 2 blocks for next period, claim all and check debts
+        #[ink::test]
+        fn check_is_total_debts_is_zero_after_all_claims() {
+            let total_balance = 100_000_001u128;
+            let (accounts, mut contract) = create_accounts_and_contract(total_balance);
+
+            // goto next period so can beneficiaries can claim
+            advance_n_blocks(2);
+            let bob_amount_claim = contract.get_amount_to_claim(accounts.bob).unwrap();
+            let charlie_amount_claim = contract.get_amount_to_claim(accounts.charlie).unwrap();
+
+            // claim bob and charlie, then check if debt is 0
             set_sender(accounts.bob);
             contract
                 .claim_payment(accounts.bob, bob_amount_claim)
@@ -1673,60 +1680,26 @@ mod open_payroll {
             assert_eq!(contract.get_total_debts(), 0);
         }
 
-        /// Test test_total_debt_with_unclaimed_for_next_period and get_total_debt_for_next_period
         #[ink::test]
-        fn test_total_debt_with_unclaimed_for_next_period() {
-            let accounts = default_accounts();
-            set_sender(accounts.alice);
+        fn check_total_debt_with_unclaimed_for_next_period_on_init() {
+            let (_, contract) = create_accounts_and_contract(100_000_001u128);
 
-            let mut contract = create_contract(100_000_001u128, &accounts);
             let total_debts = contract.get_total_debt_with_unclaimed_for_next_period();
             assert_eq!(total_debts, 2060);
-            assert_eq!(contract.get_balance_with_debts(), 100000001);
+        }
 
-            // goto next period so can beneficiaries can claim
+        #[ink::test]
+        fn check_total_debt_with_unclaimed_for_next_period_advancing_a_period() {
+            let (_, contract) = create_accounts_and_contract(100_000_001u128);
+
             advance_n_blocks(2);
 
-            let bob_amount_claim = contract
-                ._get_amount_to_claim_in_block(accounts.bob, false, get_current_block())
-                .unwrap();
-            let charlie_amount_claim = contract
-                ._get_amount_to_claim_in_block(accounts.charlie, false, get_current_block())
-                .unwrap();
-            let charlie_amount_claim_next_period = contract
-                ._get_amount_to_claim_in_block(accounts.charlie, false, get_current_block() + 2)
-                .unwrap();
             let total_debts_with_unclaimed =
                 contract.get_total_debt_with_unclaimed_for_next_period();
-            let total_debts = contract.get_total_debt_for_next_period();
+            let total_debts_next_period = contract.get_total_debt_for_next_period();
 
-            let beneficiary_charlie = contract.beneficiaries.get(&accounts.charlie).unwrap();
-            let amount_claim_one_period_charlie =
-                contract._get_amount_to_claim_for_one_period(&beneficiary_charlie, false);
             assert_eq!(total_debts_with_unclaimed, 4120);
-            assert_eq!(
-                total_debts_with_unclaimed,
-                (bob_amount_claim + charlie_amount_claim) * 2
-            );
-            assert_eq!(total_debts, 2060);
-            assert_eq!(charlie_amount_claim_next_period, charlie_amount_claim * 2);
-            assert_eq!(amount_claim_one_period_charlie, 1030);
-            // claim all and check if debt is 0
-            set_sender(accounts.bob);
-            contract
-                .claim_payment(accounts.bob, bob_amount_claim)
-                .unwrap();
-            set_sender(accounts.charlie);
-            contract
-                .claim_payment(accounts.charlie, charlie_amount_claim)
-                .unwrap();
-
-            assert_eq!(contract.get_total_debts(), 0);
-            let total_debts_with_unclaimed =
-                contract.get_total_debt_with_unclaimed_for_next_period();
-            let total_debts = contract.get_total_debt_for_next_period();
-            assert_eq!(total_debts_with_unclaimed, 2060);
-            assert_eq!(total_debts, 2060);
+            assert_eq!(total_debts_next_period, 2060);
         }
     }
 }
