@@ -35,4 +35,8 @@ pub enum Error {
     DuplicatedBeneficiaries,
     // The multiplier is not expired yet
     MultiplierNotExpired,
+    // The maximum number of beneficiaries is exceeded
+    MaxBeneficiariesExceeded,
+    // The maximum number of multipliers is exceeded
+    MaxMultipliersExceeded,
 }

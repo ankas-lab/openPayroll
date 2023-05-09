@@ -12,6 +12,8 @@ mod open_payroll {
 
     type Multiplier = u128;
     type MultiplierId = u32;
+    const MAX_BENEFICIARIES: usize = 100;
+    const MAX_MULTIPLIERS: usize = 10;
 
     #[derive(scale::Encode, scale::Decode, Eq, PartialEq, Debug, Clone)]
     #[cfg_attr(feature = "std", derive(scale_info::TypeInfo, StorageLayout))]
@@ -137,6 +139,14 @@ mod open_payroll {
             check_no_duplicate_beneficiaries(
                 &initial_beneficiaries.iter().map(|b| b.account_id).collect(),
             )?;
+
+            if initial_beneficiaries.len() > MAX_BENEFICIARIES {
+                return Err(Error::MaxBeneficiariesExceeded);
+            }
+
+            if initial_base_multipliers.len() > MAX_MULTIPLIERS {
+                return Err(Error::MaxMultipliersExceeded);
+            }
 
             let mut beneficiaries = Mapping::default();
             let mut accounts = Vec::new();
@@ -310,6 +320,10 @@ mod open_payroll {
                 );
             } else {
                 // add a new beneficiary
+                if self.beneficiaries_accounts.len() + 1 > MAX_BENEFICIARIES {
+                    return Err(Error::MaxBeneficiariesExceeded);
+                }
+
                 self.beneficiaries.insert(
                     account_id,
                     &Beneficiary {
