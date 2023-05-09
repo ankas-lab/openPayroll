@@ -88,6 +88,36 @@ mod open_payroll {
         btree_map
     }
 
+    fn check_no_duplicate_beneficiaries(beneficiaries: &Vec<AccountId>) -> Result<(), Error> {
+        let mut sorted_beneficiaries = beneficiaries.clone();
+        sorted_beneficiaries.sort_by_key(|&beneficiary| beneficiary);
+
+        for i in 1..sorted_beneficiaries.len() {
+            if sorted_beneficiaries[i - 1] == sorted_beneficiaries[i] {
+                return Err(Error::DuplicatedBeneficiaries);
+            }
+        }
+
+        Ok(())
+    }
+
+    //TODO: Maybe this function could be generic over the type of the vec and the error type
+    // Can be used to check unique multipliers and also unique beneficiaries
+    fn check_no_duplicate_multipliers(
+        multipliers: &Vec<(MultiplierId, Multiplier)>,
+    ) -> Result<(), Error> {
+        let mut sorted_multipliers = multipliers.clone();
+        sorted_multipliers.sort_by_key(|&(multiplier_id, _)| multiplier_id);
+
+        for i in 1..sorted_multipliers.len() {
+            if sorted_multipliers[i - 1].0 == sorted_multipliers[i].0 {
+                return Err(Error::DuplicatedMultipliers);
+            }
+        }
+
+        Ok(())
+    }
+
     impl OpenPayroll {
         #[ink(constructor, payable)]
         pub fn new(
@@ -104,6 +134,10 @@ mod open_payroll {
                 return Err(Error::InvalidParams);
             }
 
+            check_no_duplicate_beneficiaries(
+                &initial_beneficiaries.iter().map(|b| b.account_id).collect(),
+            )?;
+
             let mut beneficiaries = Mapping::default();
             let mut accounts = Vec::new();
             let mut base_multipliers = Mapping::default();
@@ -119,7 +153,6 @@ mod open_payroll {
                 next_multiplier_id += 1;
             }
 
-            //TODO: Check that all the accounts are different
             // Create the initial beneficiaries
             for beneficiary_data in initial_beneficiaries.iter() {
                 if beneficiary_data.multipliers.len() != multipliers_list.len() {
@@ -247,23 +280,6 @@ mod open_payroll {
             Ok(())
         }
 
-        //TODO: Maybe this function could be generic over the type of the vec and the error type
-        // Can be used to check unique multipliers and also unique beneficiaries
-        fn check_no_duplicate_multipliers(
-            multipliers: &Vec<(MultiplierId, Multiplier)>,
-        ) -> Result<(), Error> {
-            let mut sorted_multipliers = multipliers.clone();
-            sorted_multipliers.sort_by_key(|&(multiplier_id, _)| multiplier_id);
-
-            for i in 1..sorted_multipliers.len() {
-                if sorted_multipliers[i - 1].0 == sorted_multipliers[i].0 {
-                    return Err(Error::DuplicatedMultipliers);
-                }
-            }
-
-            Ok(())
-        }
-
         /// Add a new beneficiary or modify the multiplier of an existing one.
         /// TODO: maybe split this function in two
         /// TODO: Check that all the accounts are different
@@ -277,7 +293,7 @@ mod open_payroll {
 
             // TODO: Add tests for this checks
             self.check_multipliers_are_valid(&multipliers)?;
-            OpenPayroll::check_no_duplicate_multipliers(&multipliers)?;
+            check_no_duplicate_multipliers(&multipliers)?;
 
             let multipliers = vec_to_btreemap(&multipliers);
 
@@ -1016,6 +1032,27 @@ mod open_payroll {
             );
 
             assert!(matches!(res, Err(Error::InvalidMultipliersLength)));
+        }
+
+        #[ink::test]
+        fn create_contract_with_duplicated_beneficiaries() {
+            let accounts = default_accounts();
+            let beneficiary_1 = InitialBeneficiary {
+                account_id: accounts.bob,
+                multipliers: vec![(0, 100), (1, 3)],
+            };
+            let beneficiary_2 = InitialBeneficiary {
+                account_id: accounts.bob,
+                multipliers: vec![(0, 100), (1, 3)],
+            };
+            let res = OpenPayroll::new(
+                2,
+                1000,
+                vec!["Seniority".to_string(), "Performance".to_string()],
+                vec![beneficiary_1, beneficiary_2],
+            );
+
+            assert!(matches!(res, Err(Error::DuplicatedBeneficiaries)));
         }
 
         /// Add a new beneficiary and check that it is added

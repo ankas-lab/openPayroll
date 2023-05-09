@@ -31,6 +31,8 @@ pub enum Error {
     MultiplierNotDeactivated,
     // There are duplicated multipliers
     DuplicatedMultipliers,
+    // There are duplicated beneficiaries
+    DuplicatedBeneficiaries,
     // The multiplier is not expired yet
     MultiplierNotExpired,
 }
