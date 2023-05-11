@@ -778,7 +778,10 @@ mod open_payroll {
     /// ---------------------------------------------------------------
     #[cfg(test)]
     mod tests {
-        use ink::env::{test::DefaultAccounts, DefaultEnvironment};
+        use ink::{
+            env::{test::DefaultAccounts, DefaultEnvironment},
+            primitives::AccountId,
+        };
 
         use super::*;
 
@@ -1767,6 +1770,27 @@ mod open_payroll {
 
             assert_eq!(total_debts_with_unclaimed, 4120);
             assert_eq!(total_debts_next_period, 2060);
+        }
+
+        // Check if dispatch error when adding more thatn beneficiaries allowed
+        #[ink::test]
+        fn check_max_beneficiaries() {
+            let mut contract = create_contract_with_no_beneficiaries(100_000_001u128);
+            let max_beneficiaries = 100u8;
+
+            for u8_number in 0..max_beneficiaries {
+                let arr_of_32: [u8; 32] = [u8::from(u8_number); 32];
+                contract
+                    .add_or_update_beneficiary(AccountId::from(arr_of_32), vec![])
+                    .unwrap();
+            }
+
+            assert_eq!(contract.get_amount_beneficiaries(), max_beneficiaries);
+
+            // try to add one more beneficiary
+            let res = contract.add_or_update_beneficiary(AccountId::from([255u8; 32]), vec![]);
+
+            assert!(matches!(res, Err(Error::MaxBeneficiariesExceeded)));
         }
     }
 }
