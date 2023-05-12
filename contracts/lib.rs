@@ -374,6 +374,29 @@ mod open_payroll {
             Ok(())
         }
 
+        /// Add a new multiplier
+        #[ink(message)]
+        pub fn add_multiplier(&mut self, name: String) -> Result<(), Error> {
+            self.ensure_owner()?;
+            if self.multipliers_list.len() + 1 > MAX_MULTIPLIERS {
+                return Err(Error::MaxMultipliersExceeded);
+            }
+
+            //check if all payments are up to date
+            // TODO: this is really necesary ?
+            self.ensure_all_claimed_in_period()?;
+
+            let base_multiplier = BaseMultiplier {
+                name,
+                valid_until_block: None,
+            };
+            self.base_multipliers
+                .insert(self.next_multiplier_id, &base_multiplier);
+            self.multipliers_list.push(self.next_multiplier_id);
+            self.next_multiplier_id += 1;
+            Ok(())
+        }
+
         /// Update the periodicity
         #[ink(message)]
         pub fn update_periodicity(&mut self, periodicity: u32) -> Result<(), Error> {
@@ -1826,8 +1849,8 @@ mod open_payroll {
 
             let max_multipliers = 10u8;
             let mut multipliers = Vec::new();
-            for _ in 0..max_multipliers + 1 {
-                multipliers.push("Seniority".to_string());
+            for num in 0..max_multipliers + 1 {
+                multipliers.push(num.to_string());
             }
 
             let beneficiary = InitialBeneficiary {
@@ -1836,6 +1859,24 @@ mod open_payroll {
             };
 
             let res = OpenPayroll::new(2, 1000, multipliers, vec![beneficiary]);
+
+            assert!(matches!(res, Err(Error::MaxMultipliersExceeded)));
+        }
+
+        // Check if dispatch error when adding more thatn multipliers allowed from creation
+        #[ink::test]
+        fn check_max_multipliers() {
+            let mut contract = create_contract_with_no_beneficiaries(100_000_001u128);
+            let max_multipliers = 10u8;
+
+            for u8_number in 2..max_multipliers {
+                contract.add_multiplier(u8_number.to_string()).unwrap();
+            }
+
+            assert_eq!(contract.multipliers_list.len(), max_multipliers.into());
+
+            // try to add one more beneficiary
+            let res = contract.add_multiplier("max+1".to_string());
 
             assert!(matches!(res, Err(Error::MaxMultipliersExceeded)));
         }
