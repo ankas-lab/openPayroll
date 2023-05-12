@@ -1792,5 +1792,55 @@ mod open_payroll {
 
             assert!(matches!(res, Err(Error::MaxBeneficiariesExceeded)));
         }
+
+        // Check if dispatch error when adding more beneficiaries allowed from creation
+        #[ink::test]
+        fn check_max_beneficiaries_from_creation() {
+            set_balance(contract_id(), 100u128);
+
+            let max_beneficiaries = 100u8;
+            let mut beneficiaries = Vec::new();
+            for u8_number in 0..max_beneficiaries + 1 {
+                let arr_of_32: [u8; 32] = [u8::from(u8_number); 32];
+                let beneficiary = InitialBeneficiary {
+                    account_id: AccountId::from(arr_of_32),
+                    multipliers: vec![],
+                };
+                beneficiaries.push(beneficiary);
+            }
+
+            let res = OpenPayroll::new(
+                2,
+                1000,
+                vec!["Seniority".to_string(), "Performance".to_string()],
+                beneficiaries,
+            );
+
+            assert!(matches!(res, Err(Error::MaxBeneficiariesExceeded)));
+        }
+
+        // Check if dispatch error when adding more thatn multipliers allowed from creation
+        #[ink::test]
+        fn check_max_multipliers_from_creation() {
+            set_balance(contract_id(), 100u128);
+
+            let max_multipliers = 10u8;
+            let mut multipliers = Vec::new();
+            for _ in 0..max_multipliers + 1 {
+                multipliers.push("Seniority".to_string());
+            }
+
+            let beneficiary = InitialBeneficiary {
+                account_id: AccountId::from([1; 32]),
+                multipliers: vec![],
+            };
+
+            let res = OpenPayroll::new(2, 1000, multipliers, vec![beneficiary]);
+
+            assert!(matches!(res, Err(Error::MaxMultipliersExceeded)));
+        }
+
+        //TODO:
+        // max multiplier from update
     }
 }
