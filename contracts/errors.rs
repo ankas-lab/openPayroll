@@ -31,6 +31,14 @@ pub enum Error {
     MultiplierNotDeactivated,
     // There are duplicated multipliers
     DuplicatedMultipliers,
+    // There are duplicated beneficiaries
+    DuplicatedBeneficiaries,
     // The multiplier is not expired yet
     MultiplierNotExpired,
+    // The maximum number of beneficiaries is exceeded
+    MaxBeneficiariesExceeded,
+    // The maximum number of multipliers is exceeded
+    MaxMultipliersExceeded,
+    // The beneficiary already exists
+    AccountAlreadyExists,
 }
