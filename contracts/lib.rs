@@ -212,7 +212,7 @@ mod open_payroll {
                 return Err(Error::MultiplierAlreadyDeactivated);
             }
 
-            let valid_until_block = self.get_current_start_period_block() + self.periodicity;
+            let valid_until_block = self.get_current_period_initial_block() + self.periodicity;
 
             multiplier.valid_until_block = Some(valid_until_block);
             self.base_multipliers.insert(multiplier_id, &multiplier);
@@ -293,6 +293,86 @@ mod open_payroll {
         /// Add a new beneficiary or modify the multiplier of an existing one.
         /// TODO: maybe split this function in two
         /// TODO: Check that all the accounts are different
+        #[ink(message)]
+        pub fn add_beneficiary(
+            &mut self,
+            account_id: AccountId,
+            multipliers: Vec<(MultiplierId, Multiplier)>,
+        ) -> Result<(), Error> {
+            self.ensure_owner()?;
+
+            // Check that the beneficiary does not exist
+            if self.beneficiaries.contains(&account_id) {
+                return Err(Error::AccountAlreadyExists);
+            }
+
+            // Check that the number of beneficiaries does not exceed the maximum
+            if self.beneficiaries_accounts.len() + 1 > MAX_BENEFICIARIES {
+                return Err(Error::MaxBeneficiariesExceeded);
+            }
+
+            // Check that the multipliers are valid
+            self.check_multipliers_are_valid(&multipliers)?;
+            check_no_duplicate_multipliers(&multipliers)?;
+
+            let multipliers = vec_to_btreemap(&multipliers);
+
+            self.beneficiaries.insert(
+                account_id,
+                &Beneficiary {
+                    account_id,
+                    multipliers,
+                    unclaimed_payments: 0,
+                    last_claimed_period_block: self.get_current_period_initial_block(),
+                },
+            );
+
+            self.beneficiaries_accounts.push(account_id);
+
+            Ok(())
+        }
+
+        #[ink(message)]
+        pub fn update_beneficiary(
+            &mut self,
+            account_id: AccountId,
+            multipliers: Vec<(MultiplierId, Multiplier)>,
+        ) -> Result<(), Error> {
+            self.ensure_owner()?;
+
+            // Check that the beneficiary exists
+            if !self.beneficiaries.contains(&account_id) {
+                return Err(Error::AccountNotFound);
+            }
+
+            // Check that the number of beneficiaries does not exceed the maximum
+            if self.beneficiaries_accounts.len() + 1 > MAX_BENEFICIARIES {
+                return Err(Error::MaxBeneficiariesExceeded);
+            }
+
+            // Check that the multipliers are valid
+            self.check_multipliers_are_valid(&multipliers)?;
+            check_no_duplicate_multipliers(&multipliers)?;
+
+            let multipliers = vec_to_btreemap(&multipliers);
+
+            let unclaimed_payments = self._get_amount_to_claim(account_id, false);
+
+            self.beneficiaries.insert(
+                account_id,
+                &Beneficiary {
+                    account_id,
+                    multipliers,
+                    unclaimed_payments,
+                    last_claimed_period_block: self.get_current_period_initial_block(),
+                },
+            );
+
+            self.beneficiaries_accounts.push(account_id);
+
+            Ok(())
+        }
+
         #[ink(message)]
         pub fn add_or_update_beneficiary(
             &mut self,
@@ -435,26 +515,24 @@ mod open_payroll {
             account_id: AccountId,
             filtered_multipliers: bool,
             block: BlockNumber,
-        ) -> Result<Balance, Error> {
+        ) -> Balance {
             // The check that beneficiary exists is done in the caller function
             let beneficiary = self.beneficiaries.get(&account_id).unwrap();
 
             // Calculates the number of blocks that have elapsed since the last payment
             let blocks_since_last_payment = block - beneficiary.last_claimed_period_block;
 
-            // Calculates the number of payments that are due based on the elapsed blocks
+            // Calculates the number of periods that are due based on the elapsed blocks
             let unclaimed_periods: u128 = (blocks_since_last_payment / self.periodicity).into();
+
             if unclaimed_periods == 0 {
-                return Err(Error::NoUnclaimedPayments);
+                beneficiary.unclaimed_payments
+            } else {
+                let payment_per_period =
+                    self._get_amount_to_claim_for_one_period(&beneficiary, filtered_multipliers);
+
+                payment_per_period * unclaimed_periods as u128 + beneficiary.unclaimed_payments
             }
-
-            let payment_per_period =
-                self._get_amount_to_claim_for_one_period(&beneficiary, filtered_multipliers);
-
-            let total_payment =
-                payment_per_period * unclaimed_periods as u128 + beneficiary.unclaimed_payments;
-
-            Ok(total_payment)
         }
 
         /// check the amount to claim for one beneficiary in any period
@@ -494,7 +572,7 @@ mod open_payroll {
             &self,
             account_id: AccountId,
             filtered_multipliers: bool,
-        ) -> Result<Balance, Error> {
+        ) -> Balance {
             let current_block = self.env().block_number();
 
             self._get_amount_to_claim_in_block(account_id, filtered_multipliers, current_block)
@@ -507,7 +585,7 @@ mod open_payroll {
                 return Err(Error::AccountNotFound);
             }
 
-            self._get_amount_to_claim(account_id, false)
+            Ok(self._get_amount_to_claim(account_id, false))
         }
 
         /// Claim payment for a single account id
@@ -536,7 +614,7 @@ mod open_payroll {
                     .is_none()
             });
 
-            let total_payment = self._get_amount_to_claim(account_id, true)?;
+            let total_payment = self._get_amount_to_claim(account_id, true);
             if amount > total_payment {
                 return Err(Error::ClaimedAmountIsBiggerThanAvailable);
             }
@@ -546,7 +624,7 @@ mod open_payroll {
                 return Err(Error::NotEnoughBalanceInTreasury);
             }
 
-            let claiming_period_block = self.get_current_start_period_block();
+            let claiming_period_block = self.get_current_period_initial_block();
 
             // If the beneficiary has not claimed anything in the current period
             if beneficiary.last_claimed_period_block != claiming_period_block {
@@ -585,7 +663,7 @@ mod open_payroll {
         }
 
         fn ensure_all_claimed_in_period(&mut self) -> Result<(), Error> {
-            let claiming_period_block = self.get_current_start_period_block();
+            let claiming_period_block = self.get_current_period_initial_block();
 
             let claims_in_period = self.claims_in_period.clone();
 
@@ -651,7 +729,7 @@ mod open_payroll {
         /// get current block period
         /// read-only
         #[ink(message)]
-        pub fn get_current_start_period_block(&self) -> BlockNumber {
+        pub fn get_current_period_initial_block(&self) -> BlockNumber {
             let current_block = self.env().block_number();
             let claiming_period_block =
                 current_block - ((current_block - self.initial_block) % self.periodicity);
@@ -661,23 +739,20 @@ mod open_payroll {
         /// get next block period
         #[ink(message)]
         pub fn get_next_block_period(&self) -> BlockNumber {
-            self.get_current_start_period_block() + self.periodicity
+            self.get_current_period_initial_block() + self.periodicity
         }
 
         /// get all the debts up-to-date
         /// read-only
         #[ink(message)]
         pub fn get_total_debts(&self) -> Balance {
-            let claiming_period_block = self.get_current_start_period_block();
+            let claiming_period_block = self.get_current_period_initial_block();
 
             let mut debts = 0;
             for account_id in self.beneficiaries_accounts.iter() {
                 let beneficiary = self.beneficiaries.get(account_id).unwrap();
                 if beneficiary.last_claimed_period_block < claiming_period_block {
-                    let amount = match self._get_amount_to_claim(beneficiary.account_id, false) {
-                        Ok(amount) => amount,
-                        Err(_) => 0,
-                    };
+                    let amount = self._get_amount_to_claim(beneficiary.account_id, false);
                     debts += amount;
                 }
             }
@@ -708,11 +783,7 @@ mod open_payroll {
             let mut total = 0;
             for account_id in self.beneficiaries_accounts.iter() {
                 let amount =
-                    match self._get_amount_to_claim_in_block(*account_id, false, block_next_period)
-                    {
-                        Ok(amount) => amount,
-                        Err(_) => 0,
-                    };
+                    self._get_amount_to_claim_in_block(*account_id, false, block_next_period);
                 total += amount;
             }
 
@@ -751,7 +822,7 @@ mod open_payroll {
         /// read-only
         #[ink(message)]
         pub fn get_unclaimed_beneficiaries(&self) -> Vec<AccountId> {
-            let claiming_period_block = self.get_current_start_period_block();
+            let claiming_period_block = self.get_current_period_initial_block();
 
             let mut unclaimed_beneficiaries = Vec::new();
             for account_id in self.beneficiaries_accounts.iter() {
@@ -768,7 +839,7 @@ mod open_payroll {
         /// read-only
         #[ink(message)]
         pub fn get_count_of_unclaim_beneficiaries(&self) -> u8 {
-            let claiming_period_block = self.get_current_start_period_block();
+            let claiming_period_block = self.get_current_period_initial_block();
             let mut total: u8 = 0;
             for account_id in self.beneficiaries_accounts.iter() {
                 let beneficiary = self.beneficiaries.get(account_id).unwrap();
@@ -1578,19 +1649,19 @@ mod open_payroll {
             let contract = create_contract_with_no_beneficiaries_periodicity(100_000_000u128, 3);
 
             advance_n_blocks(6);
-            let current_block_period = contract.get_current_start_period_block();
+            let current_block_period = contract.get_current_period_initial_block();
             assert_eq!(current_block_period, 6);
 
             advance_n_blocks(1);
-            let current_block_period = contract.get_current_start_period_block();
+            let current_block_period = contract.get_current_period_initial_block();
             assert_eq!(current_block_period, 6);
 
             advance_n_blocks(1);
-            let current_block_period = contract.get_current_start_period_block();
+            let current_block_period = contract.get_current_period_initial_block();
             assert_eq!(current_block_period, 6);
 
             advance_n_blocks(1);
-            let current_block_period = contract.get_current_start_period_block();
+            let current_block_period = contract.get_current_period_initial_block();
             assert_eq!(current_block_period, 9);
         }
 

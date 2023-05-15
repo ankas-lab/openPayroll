@@ -39,4 +39,6 @@ pub enum Error {
     MaxBeneficiariesExceeded,
     // The maximum number of multipliers is exceeded
     MaxMultipliersExceeded,
+    // The beneficiary already exists
+    AccountAlreadyExists,
 }
