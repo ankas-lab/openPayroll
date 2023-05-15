@@ -373,51 +373,6 @@ mod open_payroll {
             Ok(())
         }
 
-        #[ink(message)]
-        pub fn add_or_update_beneficiary(
-            &mut self,
-            account_id: AccountId,
-            multipliers: Vec<(MultiplierId, Multiplier)>,
-        ) -> Result<(), Error> {
-            self.ensure_owner()?;
-
-            // TODO: Add tests for this checks
-            self.check_multipliers_are_valid(&multipliers)?;
-            check_no_duplicate_multipliers(&multipliers)?;
-
-            let multipliers = vec_to_btreemap(&multipliers);
-
-            if let Some(beneficiary) = self.beneficiaries.get(&account_id) {
-                // update the multiplier
-                self.beneficiaries.insert(
-                    account_id,
-                    &Beneficiary {
-                        account_id,
-                        multipliers,
-                        unclaimed_payments: beneficiary.unclaimed_payments,
-                        last_claimed_period_block: beneficiary.last_claimed_period_block,
-                    },
-                );
-            } else {
-                // add a new beneficiary
-                if self.beneficiaries_accounts.len() + 1 > MAX_BENEFICIARIES {
-                    return Err(Error::MaxBeneficiariesExceeded);
-                }
-
-                self.beneficiaries.insert(
-                    account_id,
-                    &Beneficiary {
-                        account_id,
-                        multipliers,
-                        unclaimed_payments: 0,
-                        last_claimed_period_block: 0,
-                    },
-                );
-                self.beneficiaries_accounts.push(account_id);
-            }
-            Ok(())
-        }
-
         /// Remove a beneficiary
         #[ink(message)]
         pub fn remove_beneficiary(&mut self, account_id: AccountId) -> Result<(), Error> {
@@ -1173,7 +1128,7 @@ mod open_payroll {
             set_sender(accounts.alice);
             let mut contract = create_contract_with_no_beneficiaries(100_000_000u128);
             contract
-                .add_or_update_beneficiary(accounts.bob, vec![(0, 200), (1, 100)])
+                .add_beneficiary(accounts.bob, vec![(0, 200), (1, 100)])
                 .unwrap();
             assert_eq!(
                 contract
@@ -1184,7 +1139,7 @@ mod open_payroll {
                 vec_to_btreemap(&vec![(0, 200), (1, 100)])
             );
             contract
-                .add_or_update_beneficiary(accounts.bob, vec![(0, 200), (1, 50)])
+                .update_beneficiary(accounts.bob, vec![(0, 200), (1, 50)])
                 .unwrap();
             assert_eq!(
                 contract
@@ -1210,7 +1165,7 @@ mod open_payroll {
             let mut contract = create_contract_with_no_beneficiaries(100_000_000u128);
             set_sender(accounts.bob);
             assert!(matches!(
-                contract.add_or_update_beneficiary(accounts.bob, vec![(0, 100), (1, 100)]),
+                contract.add_beneficiary(accounts.bob, vec![(0, 100), (1, 100)]),
                 Err(Error::NotOwner)
             ));
             // check if account was NOT added to the vector
@@ -1224,7 +1179,7 @@ mod open_payroll {
             set_sender(accounts.alice);
             let mut contract = create_contract_with_no_beneficiaries(100_000_000u128);
             assert!(matches!(
-                contract.add_or_update_beneficiary(accounts.bob, vec![]),
+                contract.add_beneficiary(accounts.bob, vec![]),
                 Ok(_)
             ));
         }
@@ -1236,7 +1191,7 @@ mod open_payroll {
             set_sender(accounts.alice);
             let mut contract = create_contract_with_no_beneficiaries(100_000_000u128);
             contract
-                .add_or_update_beneficiary(accounts.bob, vec![(0, 100), (1, 20)])
+                .add_beneficiary(accounts.bob, vec![(0, 100), (1, 20)])
                 .unwrap();
             assert_eq!(contract.beneficiaries_accounts.len(), 1);
             assert_eq!(
@@ -1264,7 +1219,7 @@ mod open_payroll {
             set_sender(accounts.alice);
             let mut contract = create_contract_with_no_beneficiaries(100_000_000u128);
             contract
-                .add_or_update_beneficiary(accounts.bob, vec![(0, 100), (1, 20)])
+                .add_beneficiary(accounts.bob, vec![(0, 100), (1, 20)])
                 .unwrap();
             set_sender(accounts.bob);
             assert!(matches!(
@@ -1401,7 +1356,7 @@ mod open_payroll {
         fn claim_payment() {
             let (accounts, mut contract) = create_accounts_and_contract(100_000_000u128);
             contract
-                .add_or_update_beneficiary(accounts.bob, vec![(0, 100), (1, 20)])
+                .update_beneficiary(accounts.bob, vec![(0, 100), (1, 20)])
                 .unwrap();
             // advance 3 blocks so a payment will be claimable
             advance_n_blocks(3);
@@ -1425,7 +1380,7 @@ mod open_payroll {
             let total_not_claimed = 10;
             let (accounts, mut contract) = create_accounts_and_contract(total_amount);
             contract
-                .add_or_update_beneficiary(accounts.bob, vec![(0, 100), (1, 20)])
+                .update_beneficiary(accounts.bob, vec![(0, 100), (1, 20)])
                 .unwrap();
 
             // advance 3 blocks so a payment will be claimable
@@ -1461,7 +1416,7 @@ mod open_payroll {
             let total_amount = 100_000_000u128;
             let (accounts, mut contract) = create_accounts_and_contract(total_amount);
             contract
-                .add_or_update_beneficiary(accounts.bob, vec![(0, 100), (1, 20)])
+                .update_beneficiary(accounts.bob, vec![(0, 100), (1, 20)])
                 .unwrap();
 
             // advance 3 blocks so a payment will be claimable
@@ -1486,7 +1441,7 @@ mod open_payroll {
         fn update_periodicity_without_all_payments_updated() {
             let (accounts, mut contract) = create_accounts_and_contract(100_000_000u128);
             contract
-                .add_or_update_beneficiary(accounts.bob, vec![(0, 100), (1, 20)])
+                .update_beneficiary(accounts.bob, vec![(0, 100), (1, 20)])
                 .unwrap();
 
             // advance 3 blocks so a payment will be claimable
@@ -1503,7 +1458,7 @@ mod open_payroll {
             set_sender(accounts.alice);
             let mut contract = create_contract_with_no_beneficiaries(100_000_000u128);
             contract
-                .add_or_update_beneficiary(accounts.bob, vec![(0, 100), (1, 20)])
+                .add_beneficiary(accounts.bob, vec![(0, 100), (1, 20)])
                 .unwrap();
             // advance 3 blocks so a payment will be claimable
             advance_n_blocks(3);
@@ -1523,7 +1478,7 @@ mod open_payroll {
             set_sender(accounts.alice);
             let mut contract = create_contract_with_no_beneficiaries(100_000_000u128);
             contract
-                .add_or_update_beneficiary(accounts.bob, vec![(0, 100), (1, 20)])
+                .add_beneficiary(accounts.bob, vec![(0, 100), (1, 20)])
                 .unwrap();
             // advance 3 blocks so a payment will be claimable
             advance_n_blocks(3);
@@ -1548,7 +1503,7 @@ mod open_payroll {
             set_sender(accounts.alice);
             let mut contract = create_contract_with_no_beneficiaries(100_000_000u128);
             contract
-                .add_or_update_beneficiary(accounts.bob, vec![(0, 100), (1, 20)])
+                .add_beneficiary(accounts.bob, vec![(0, 100), (1, 20)])
                 .unwrap();
             // advance 3 blocks so a payment will be claimable
             advance_n_blocks(3);
@@ -1565,7 +1520,7 @@ mod open_payroll {
             set_sender(accounts.alice);
             let mut contract = create_contract_with_no_beneficiaries(100_000_000u128);
             contract
-                .add_or_update_beneficiary(accounts.bob, vec![(0, 100), (1, 20)])
+                .add_beneficiary(accounts.bob, vec![(0, 100), (1, 20)])
                 .unwrap();
             // advance 3 blocks so a payment will be claimable
             advance_n_blocks(3);
@@ -1599,7 +1554,7 @@ mod open_payroll {
             let (accounts, mut contract) = create_accounts_and_contract(total_balance);
 
             contract
-                .add_or_update_beneficiary(accounts.bob, vec![(0, 100), (1, 20)])
+                .update_beneficiary(accounts.bob, vec![(0, 100), (1, 20)])
                 .unwrap();
 
             //check if multipliers are ok
@@ -1875,14 +1830,14 @@ mod open_payroll {
             for u8_number in 0..max_beneficiaries {
                 let arr_of_32: [u8; 32] = [u8::from(u8_number); 32];
                 contract
-                    .add_or_update_beneficiary(AccountId::from(arr_of_32), vec![])
+                    .add_beneficiary(AccountId::from(arr_of_32), vec![])
                     .unwrap();
             }
 
             assert_eq!(contract.get_amount_beneficiaries(), max_beneficiaries);
 
             // try to add one more beneficiary
-            let res = contract.add_or_update_beneficiary(AccountId::from([255u8; 32]), vec![]);
+            let res = contract.add_beneficiary(AccountId::from([255u8; 32]), vec![]);
 
             assert!(matches!(res, Err(Error::MaxBeneficiariesExceeded)));
         }
