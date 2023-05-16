@@ -381,14 +381,17 @@ mod open_payroll {
                 return Err(Error::AccountNotFound);
             }
             self.beneficiaries.remove(&account_id);
-            // remove the account from the vector
-            if let Some(pos) = self
+
+            // Get the index of the beneficiary.
+            // It will always be in the vector
+            let beneficiary_index = self
                 .beneficiaries_accounts
                 .iter()
                 .position(|x| *x == account_id)
-            {
-                self.beneficiaries_accounts.remove(pos);
-            }
+                .unwrap();
+
+            // Remove the beneficiary from the vector
+            self.beneficiaries_accounts.remove(beneficiary_index);
 
             Ok(())
         }
