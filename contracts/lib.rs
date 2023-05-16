@@ -34,7 +34,7 @@ mod open_payroll {
     #[cfg_attr(feature = "std", derive(scale_info::TypeInfo, StorageLayout,))]
     pub struct Beneficiary {
         account_id: AccountId,
-        multipliers: BTreeMap<MultiplierId, Multiplier>, //https://paritytech.github.io/ink/ink_prelude/collections/btree_map/struct.BTreeMap.html#method.iter
+        multipliers: BTreeMap<MultiplierId, Multiplier>,
         unclaimed_payments: Balance,
         last_updated_period_block: BlockNumber,
     }
@@ -54,19 +54,21 @@ mod open_payroll {
         total_claims: u32,
     }
 
+    //TODO: Explain that AccountIds in mapping and vector are the same
+    // Same with MultiplierIds and BaseMultipliers
     #[ink(storage)]
     pub struct OpenPayroll {
-        /// The accountId of the creator of the contract, who has 'priviliged' access to do administrative tasks
+        /// The accountId of the creator of the contract, who has 'privileged' access to do administrative tasks
         owner: AccountId,
-        /// Mapping with the accounts of the beneficiaries and the multiplier to apply to the base payment
+        /// Mapping from the accountId to the beneficiary information
         beneficiaries: Mapping<AccountId, Beneficiary>,
         /// Vector of Accounts
         beneficiaries_accounts: Vec<AccountId>,
-        /// We pay out every n blocks
+        /// The payment periodicity in blocks
         periodicity: u32,
         /// The amount of each base payment
         base_payment: Balance,
-        /// The initial block number.
+        /// The initial block number
         initial_block: u32,
         /// The block number when the contract was paused
         paused_block_at: Option<u32>,
@@ -78,44 +80,6 @@ mod open_payroll {
         multipliers_list: Vec<MultiplierId>,
         /// Current claims in period
         claims_in_period: ClaimsInPeriod,
-    }
-
-    fn vec_to_btreemap(
-        vec: &Vec<(MultiplierId, Multiplier)>,
-    ) -> BTreeMap<MultiplierId, Multiplier> {
-        let mut btree_map = BTreeMap::new();
-        for (id, multiplier) in vec.iter() {
-            btree_map.insert(*id, *multiplier);
-        }
-        btree_map
-    }
-
-    fn check_no_duplicate_beneficiaries(beneficiaries: &Vec<AccountId>) -> Result<(), Error> {
-        let mut sorted_beneficiaries = beneficiaries.clone();
-        sorted_beneficiaries.sort_by_key(|&beneficiary| beneficiary);
-
-        for i in 1..sorted_beneficiaries.len() {
-            if sorted_beneficiaries[i - 1] == sorted_beneficiaries[i] {
-                return Err(Error::DuplicatedBeneficiaries);
-            }
-        }
-
-        Ok(())
-    }
-
-    fn check_no_duplicate_multipliers(
-        multipliers: &Vec<(MultiplierId, Multiplier)>,
-    ) -> Result<(), Error> {
-        let mut sorted_multipliers = multipliers.clone();
-        sorted_multipliers.sort_by_key(|&(multiplier_id, _)| multiplier_id);
-
-        for i in 1..sorted_multipliers.len() {
-            if sorted_multipliers[i - 1].0 == sorted_multipliers[i].0 {
-                return Err(Error::DuplicatedMultipliers);
-            }
-        }
-
-        Ok(())
     }
 
     impl OpenPayroll {
@@ -167,6 +131,8 @@ mod open_payroll {
                     return Err(Error::InvalidMultipliersLength);
                 }
 
+                check_no_duplicate_multipliers(&beneficiary_data.multipliers)?;
+
                 let multipliers = vec_to_btreemap(&beneficiary_data.multipliers);
 
                 let beneficiary = Beneficiary {
@@ -198,6 +164,71 @@ mod open_payroll {
                 multipliers_list,
                 claims_in_period,
             })
+        }
+
+        /// Claim payment for a single account id
+        /// TODO: Add comment explaining what happens when amount is 0
+        #[ink(message)]
+        pub fn claim_payment(
+            &mut self,
+            account_id: AccountId,
+            amount: Balance,
+        ) -> Result<(), Error> {
+            self.ensure_is_not_paused()?;
+
+            let beneficiary_res = self.beneficiaries.get(&account_id);
+
+            let mut beneficiary = match beneficiary_res {
+                Some(b) => b,
+                None => return Err(Error::AccountNotFound),
+            };
+
+            let current_block = self.env().block_number();
+
+            // If there are deactivated multipliers, remove them from the beneficiary
+            beneficiary.multipliers.retain(|&k, _| {
+                let a = self.base_multipliers.get(&k).unwrap().valid_until_block;
+
+                // We keep the multiplier if it is not deactivated
+                // or if it is deactivated but the current block is before the deactivation block
+                a.is_none() || a.unwrap() > current_block
+            });
+
+            let total_payment = self._get_amount_to_claim(account_id, true);
+            if amount > total_payment {
+                return Err(Error::ClaimedAmountIsBiggerThanAvailable);
+            }
+
+            let treasury_balance = self.env().balance();
+            if amount > treasury_balance {
+                return Err(Error::NotEnoughBalanceInTreasury);
+            }
+
+            let claiming_period_block = self.get_current_period_initial_block();
+
+            // If the beneficiary has not claimed anything in the current period
+            if beneficiary.last_updated_period_block != claiming_period_block {
+                self._update_claims_in_period(claiming_period_block);
+            }
+
+            self.beneficiaries.insert(
+                account_id,
+                &Beneficiary {
+                    account_id,
+                    multipliers: beneficiary.multipliers,
+                    unclaimed_payments: total_payment - amount,
+                    last_updated_period_block: claiming_period_block,
+                },
+            );
+
+            // Transfer the amount to the beneficiary if amount > 0
+            if amount > 0 {
+                if let Err(_) = self.env().transfer(account_id, amount) {
+                    return Err(Error::TransferFailed);
+                }
+            }
+
+            Ok(())
         }
 
         #[ink(message)]
@@ -545,70 +576,7 @@ mod open_payroll {
             Ok(self._get_amount_to_claim(account_id, false))
         }
 
-        /// Claim payment for a single account id
-        #[ink(message)]
-        pub fn claim_payment(
-            &mut self,
-            account_id: AccountId,
-            amount: Balance,
-        ) -> Result<(), Error> {
-            self.ensure_is_not_paused()?;
-
-            if !self.beneficiaries.contains(&account_id) {
-                return Err(Error::AccountNotFound);
-            }
-
-            let mut beneficiary = self.beneficiaries.get(&account_id).expect(
-                "This will never panic because we check it in the function get_amount_to_claim",
-            );
-
-            // If there are deactivated multipliers, remove them from the beneficiary
-            beneficiary.multipliers.retain(|&k, _| {
-                self.base_multipliers
-                    .get(&k)
-                    .unwrap()
-                    .valid_until_block
-                    .is_none()
-            });
-
-            let total_payment = self._get_amount_to_claim(account_id, true);
-            if amount > total_payment {
-                return Err(Error::ClaimedAmountIsBiggerThanAvailable);
-            }
-
-            let treasury_balance = self.env().balance();
-            if amount > treasury_balance {
-                return Err(Error::NotEnoughBalanceInTreasury);
-            }
-
-            let claiming_period_block = self.get_current_period_initial_block();
-
-            // If the beneficiary has not claimed anything in the current period
-            if beneficiary.last_updated_period_block != claiming_period_block {
-                self.update_claims_in_period(claiming_period_block);
-            }
-
-            self.beneficiaries.insert(
-                account_id,
-                &Beneficiary {
-                    account_id,
-                    multipliers: beneficiary.multipliers,
-                    unclaimed_payments: total_payment - amount,
-                    last_updated_period_block: claiming_period_block,
-                },
-            );
-
-            // Transfer the amount to the beneficiary if amount > 0
-            if amount > 0 {
-                if let Err(_) = self.env().transfer(account_id, amount) {
-                    return Err(Error::TransferFailed);
-                }
-            }
-
-            Ok(())
-        }
-
-        pub fn update_claims_in_period(&mut self, claiming_period_block: BlockNumber) {
+        fn _update_claims_in_period(&mut self, claiming_period_block: BlockNumber) {
             if claiming_period_block == self.claims_in_period.period {
                 // Updates current claims in period
                 self.claims_in_period.total_claims += 1;
@@ -799,6 +767,49 @@ mod open_payroll {
             total
         }
     }
+
+    /// ---------------------------------------------------------------
+    /// Pure functions
+    /// ---------------------------------------------------------------
+
+    fn vec_to_btreemap(
+        vec: &Vec<(MultiplierId, Multiplier)>,
+    ) -> BTreeMap<MultiplierId, Multiplier> {
+        let mut btree_map = BTreeMap::new();
+        for (id, multiplier) in vec.iter() {
+            btree_map.insert(*id, *multiplier);
+        }
+        btree_map
+    }
+
+    fn check_no_duplicate_beneficiaries(beneficiaries: &Vec<AccountId>) -> Result<(), Error> {
+        let mut sorted_beneficiaries = beneficiaries.clone();
+        sorted_beneficiaries.sort_by_key(|&beneficiary| beneficiary);
+
+        for i in 1..sorted_beneficiaries.len() {
+            if sorted_beneficiaries[i - 1] == sorted_beneficiaries[i] {
+                return Err(Error::DuplicatedBeneficiaries);
+            }
+        }
+
+        Ok(())
+    }
+
+    fn check_no_duplicate_multipliers(
+        multipliers: &Vec<(MultiplierId, Multiplier)>,
+    ) -> Result<(), Error> {
+        let mut sorted_multipliers = multipliers.clone();
+        sorted_multipliers.sort_by_key(|&(multiplier_id, _)| multiplier_id);
+
+        for i in 1..sorted_multipliers.len() {
+            if sorted_multipliers[i - 1].0 == sorted_multipliers[i].0 {
+                return Err(Error::DuplicatedMultipliers);
+            }
+        }
+
+        Ok(())
+    }
+    /// ---------------------------------------------------------------
 
     /// ---------------------------------------------------------------
     ///
