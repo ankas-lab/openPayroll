@@ -290,6 +290,14 @@ mod open_payroll {
             Ok(())
         }
 
+        // Change ownership of the contract
+        #[ink(message)]
+        pub fn transfer_ownership(&mut self, new_owner: AccountId) -> Result<(), Error> {
+            self.ensure_owner()?;
+            self.owner = new_owner;
+            Ok(())
+        }
+
         /// Add a new beneficiary or modify the multiplier of an existing one.
         /// TODO: maybe split this function in two
         /// TODO: Check that all the accounts are different
@@ -1840,6 +1848,22 @@ mod open_payroll {
             let res = contract.add_beneficiary(AccountId::from([255u8; 32]), vec![]);
 
             assert!(matches!(res, Err(Error::MaxBeneficiariesExceeded)));
+        }
+
+        // Test change ownership
+        #[ink::test]
+        fn check_transfer_ownership() {
+            let (accounts, mut contract) = create_accounts_and_contract(100_000_001u128);
+
+            // check if owner is alice
+            assert_eq!(contract.owner, accounts.alice);
+
+            // change owner to bob
+            set_sender(accounts.alice);
+            contract.transfer_ownership(accounts.bob);
+
+            // check if owner is bob
+            assert_eq!(contract.owner, accounts.bob);
         }
 
         // Check if dispatch error when adding more beneficiaries allowed from creation
