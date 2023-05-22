@@ -56,6 +56,8 @@ mod open_payroll {
 
     #[ink(storage)]
     pub struct OpenPayroll {
+        /// The account to be transfered to, until the new owner accept it
+        transfered_owner: Option<AccountId>,
         /// The accountId of the creator of the contract, who has 'priviliged' access to do administrative tasks
         owner: AccountId,
         /// Mapping with the accounts of the beneficiaries and the multiplier to apply to the base payment
@@ -129,6 +131,7 @@ mod open_payroll {
             initial_beneficiaries: Vec<InitialBeneficiary>,
         ) -> Result<Self, Error> {
             let initial_block_number = Self::env().block_number();
+            let transfered_owner = None;
             let owner = Self::env().caller();
             let mut next_multiplier_id = 0;
 
@@ -188,6 +191,7 @@ mod open_payroll {
             };
 
             Ok(Self {
+                transfered_owner,
                 owner,
                 beneficiaries,
                 periodicity,
@@ -290,9 +294,30 @@ mod open_payroll {
             Ok(())
         }
 
+        // Change ownership of the contract
+        #[ink(message)]
+        pub fn transfer_ownership(&mut self, new_owner: AccountId) -> Result<(), Error> {
+            self.ensure_owner()?;
+            self.transfered_owner = Some(new_owner);
+            Ok(())
+        }
+
+        // Accept ownership of the contract
+        #[ink(message)]
+        pub fn accept_ownership(&mut self) -> Result<(), Error> {
+            if self.transfered_owner == Some(self.env().caller()) {
+                self.owner = self.transfered_owner.unwrap();
+                self.transfered_owner = None;
+                Ok(())
+            } else {
+                Err(Error::NotOwner)
+            }
+        }
+
         /// Add a new beneficiary or modify the multiplier of an existing one.
         /// TODO: maybe split this function in two
         /// TODO: Check that all the accounts are different
+        /// TODO check multipliers integrity and validate them
         #[ink(message)]
         pub fn add_beneficiary(
             &mut self,
@@ -1839,6 +1864,47 @@ mod open_payroll {
             let res = contract.add_beneficiary(AccountId::from([255u8; 32]), vec![]);
 
             assert!(matches!(res, Err(Error::MaxBeneficiariesExceeded)));
+        }
+
+        // Test failing when try to claim not transfered ownership
+        #[ink::test]
+        fn failing_not_transfered_ownership() {
+            let (_, mut contract) = create_accounts_and_contract(100_000_001u128);
+
+            // try to accept ownership
+            let accept_ownsership_result = contract.accept_ownership();
+            assert!(matches!(
+                accept_ownsership_result,
+                Err(Error::NotOwner)
+            ));
+
+        }
+
+        // Test change ownership
+        #[ink::test]
+        fn check_transfer_ownership() {
+            let (accounts, mut contract) = create_accounts_and_contract(100_000_001u128);
+
+            // check no transfered ownership was called yet
+            assert_eq!(contract.transfered_owner, None);
+            // check if owner is alice
+            assert_eq!(contract.owner, accounts.alice);
+
+            // change owner to bob
+            set_sender(accounts.alice);
+            let transfer_ownership_result = contract.transfer_ownership(accounts.bob);
+            assert!(transfer_ownership_result.is_ok());
+
+            // check if owner is bob
+            assert_eq!(contract.transfered_owner, Some(accounts.bob));
+
+            // accept ownership
+            set_sender(accounts.bob);
+            let accept_ownsership_result = contract.accept_ownership();
+            assert!(accept_ownsership_result.is_ok());
+
+            assert_eq!(contract.owner, accounts.bob);
+            assert_eq!(contract.transfered_owner, None);
         }
 
         // Check if dispatch error when adding more beneficiaries allowed from creation
