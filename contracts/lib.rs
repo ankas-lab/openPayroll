@@ -350,31 +350,6 @@ mod open_payroll {
         /// TODO: maybe split this function in two
         /// TODO: Check that all the accounts are different
         /// TODO check multipliers integrity and validate them
-        /// Add a new beneficiary
-        // Change ownership of the contract
-        #[ink(message)]
-        pub fn transfer_ownership(&mut self, new_owner: AccountId) -> Result<(), Error> {
-            self.ensure_owner()?;
-            self.transfered_owner = Some(new_owner);
-            Ok(())
-        }
-
-        // Accept ownership of the contract
-        #[ink(message)]
-        pub fn accept_ownership(&mut self) -> Result<(), Error> {
-            if self.transfered_owner == Some(self.env().caller()) {
-                self.owner = self.transfered_owner.unwrap();
-                self.transfered_owner = None;
-                Ok(())
-            } else {
-                Err(Error::NotOwner)
-            }
-        }
-
-        /// Add a new beneficiary or modify the multiplier of an existing one.
-        /// TODO: maybe split this function in two
-        /// TODO: Check that all the accounts are different
-        /// TODO check multipliers integrity and validate them
         #[ink(message)]
         pub fn add_beneficiary(
             &mut self,
