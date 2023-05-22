@@ -1885,6 +1885,8 @@ mod open_payroll {
         fn check_transfer_ownership() {
             let (accounts, mut contract) = create_accounts_and_contract(100_000_001u128);
 
+            // check no transfered ownership was called yet
+            assert_eq!(contract.transfered_owner, None);
             // check if owner is alice
             assert_eq!(contract.owner, accounts.alice);
 
