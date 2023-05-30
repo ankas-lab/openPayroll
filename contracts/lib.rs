@@ -487,7 +487,7 @@ mod open_payroll {
             }
         }
 
-        fn check_beneficiary_is_addable(
+        fn check_beneficiary_to_add(
             &self,
             account_id: AccountId,
             multipliers: &[(MultiplierId, Multiplier)],
@@ -511,16 +511,14 @@ mod open_payroll {
             Ok(())
         }
 
-        /// Add a new beneficiary or modify the multiplier of an existing one.
-        /// TODO: Check that all the accounts are different
-        /// TODO check multipliers integrity and validate them
+        /// Add a new beneficiary
         #[ink(message)]
         pub fn add_beneficiary(
             &mut self,
             account_id: AccountId,
             multipliers: Vec<(MultiplierId, Multiplier)>,
         ) -> Result<(), Error> {
-            self.check_beneficiary_is_addable(account_id, &multipliers)?;
+            self.check_beneficiary_to_add(account_id, &multipliers)?;
 
             let multipliers_vec = multipliers.clone();
             let multipliers = vec_to_btreemap(&multipliers);
@@ -811,12 +809,6 @@ mod open_payroll {
             Err(Error::NotAllClaimedInPeriod)
         }
 
-        /// Calculate outstanding payments for the entire DAO -- this call can be expensive!!!
-        #[ink(message)]
-        pub fn calculate_outstanding_payments(&self) -> Result<Balance, Error> {
-            todo!();
-        }
-
         /// Pause the contract
         #[ink(message)]
         pub fn pause(&mut self) -> Result<(), Error> {
@@ -871,15 +863,10 @@ mod open_payroll {
         /// read-only
         #[ink(message)]
         pub fn get_total_debts(&self) -> Balance {
-            let claiming_period_block = self.get_current_period_initial_block();
-
             let mut debts = 0;
             for account_id in self.beneficiaries_accounts.iter() {
                 let beneficiary = self.beneficiaries.get(account_id).unwrap();
-                if beneficiary.last_updated_period_block < claiming_period_block {
-                    let amount = self._get_amount_to_claim(beneficiary.account_id, false);
-                    debts += amount;
-                }
+                debts += self._get_amount_to_claim(beneficiary.account_id, false);
             }
 
             debts
