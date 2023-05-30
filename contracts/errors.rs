@@ -41,4 +41,6 @@ pub enum Error {
     MaxMultipliersExceeded,
     // The beneficiary already exists
     AccountAlreadyExists,
+    // Overflow the operation
+    Overflow,
 }
