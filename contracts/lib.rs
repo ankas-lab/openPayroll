@@ -301,11 +301,11 @@ mod open_payroll {
 
             // If there are deactivated multipliers, remove them from the beneficiary
             beneficiary.multipliers.retain(|&k, _| {
-                let a = self.base_multipliers.get(k).unwrap().valid_until_block;
+                let multiplier_block_validity = self.base_multipliers.get(k).unwrap().valid_until_block;
 
                 // We keep the multiplier if it is not deactivated
                 // or if it is deactivated but the current block is before the deactivation block
-                a.is_none() || a.unwrap() > current_block
+                multiplier_block_validity.is_none() || multiplier_block_validity.unwrap() > current_block
             });
 
             // gets the total amount that the beneficiary can claim and check the amount is not bigger than that
