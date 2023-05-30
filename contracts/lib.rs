@@ -420,7 +420,8 @@ mod open_payroll {
             Ok(())
         }
 
-        fn is_paused(&self) -> bool {
+        #[ink(message)]
+        pub fn is_paused(&self) -> bool {
             self.paused_block_at.is_some()
         }
 
