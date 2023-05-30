@@ -486,15 +486,10 @@ mod open_payroll {
             }
         }
 
-        /// Add a new beneficiary or modify the multiplier of an existing one.
-        /// TODO: maybe split this function in two
-        /// TODO: Check that all the accounts are different
-        /// TODO check multipliers integrity and validate them
-        #[ink(message)]
-        pub fn add_beneficiary(
-            &mut self,
+        fn check_beneficiary_is_addable(
+            &self,
             account_id: AccountId,
-            multipliers: Vec<(MultiplierId, Multiplier)>,
+            multipliers: &[(MultiplierId, Multiplier)],
         ) -> Result<(), Error> {
             self.ensure_owner()?;
 
@@ -509,8 +504,22 @@ mod open_payroll {
             }
 
             // Check that the multipliers are valid
-            self.check_multipliers_are_valid(&multipliers)?;
-            check_no_duplicate_multipliers(&multipliers)?;
+            self.check_multipliers_are_valid(multipliers)?;
+            check_no_duplicate_multipliers(&std::vec::Vec::from(multipliers))?;
+
+            Ok(())
+        }
+
+        /// Add a new beneficiary or modify the multiplier of an existing one.
+        /// TODO: Check that all the accounts are different
+        /// TODO check multipliers integrity and validate them
+        #[ink(message)]
+        pub fn add_beneficiary(
+            &mut self,
+            account_id: AccountId,
+            multipliers: Vec<(MultiplierId, Multiplier)>,
+        ) -> Result<(), Error> {
+            self.check_beneficiary_is_addable(account_id, &multipliers)?;
 
             let multipliers_vec = multipliers.clone();
             let multipliers = vec_to_btreemap(&multipliers);
