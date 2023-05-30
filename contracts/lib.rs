@@ -161,7 +161,7 @@ mod open_payroll {
     #[ink(storage)]
     pub struct OpenPayroll {
         /// The account to be transfered to, until the new owner accept it
-        transfered_owner: Option<AccountId>,
+        proposed_owner: Option<AccountId>,
         /// The accountId of the creator of the contract, who has 'priviliged' access to do administrative tasks
         owner: AccountId,
         /// Mapping from the accountId to the beneficiary information
@@ -198,7 +198,7 @@ mod open_payroll {
             initial_beneficiaries: Vec<InitialBeneficiary>,
         ) -> Result<Self, Error> {
             let initial_block_number = Self::env().block_number();
-            let transfered_owner = None;
+            let proposed_owner = None;
             let owner = Self::env().caller();
             let mut next_multiplier_id = 0;
 
@@ -264,7 +264,7 @@ mod open_payroll {
             };
 
             Ok(Self {
-                transfered_owner,
+                proposed_owner,
                 owner,
                 beneficiaries,
                 periodicity,
@@ -301,11 +301,13 @@ mod open_payroll {
 
             // If there are deactivated multipliers, remove them from the beneficiary
             beneficiary.multipliers.retain(|&k, _| {
-                let multiplier_block_validity = self.base_multipliers.get(k).unwrap().valid_until_block;
+                let multiplier_block_validity =
+                    self.base_multipliers.get(k).unwrap().valid_until_block;
 
                 // We keep the multiplier if it is not deactivated
                 // or if it is deactivated but the current block is before the deactivation block
-                multiplier_block_validity.is_none() || multiplier_block_validity.unwrap() > current_block
+                multiplier_block_validity.is_none()
+                    || multiplier_block_validity.unwrap() > current_block
             });
 
             // gets the total amount that the beneficiary can claim and check the amount is not bigger than that
@@ -475,7 +477,7 @@ mod open_payroll {
         #[ink(message)]
         pub fn propose_transfer_ownership(&mut self, new_owner: AccountId) -> Result<(), Error> {
             self.ensure_owner()?;
-            self.transfered_owner = Some(new_owner);
+            self.proposed_owner = Some(new_owner);
 
             // Emit the OwnershipTransferred event
             self.env().emit_event(OwnershipProposed {
@@ -492,9 +494,9 @@ mod open_payroll {
         #[ink(message)]
         pub fn accept_ownership(&mut self) -> Result<(), Error> {
             let old_owner = self.owner;
-            if self.transfered_owner == Some(self.env().caller()) {
-                self.owner = self.transfered_owner.unwrap();
-                self.transfered_owner = None;
+            if self.proposed_owner == Some(self.env().caller()) {
+                self.owner = self.proposed_owner.unwrap();
+                self.proposed_owner = None;
 
                 self.env().emit_event(OwnershipAccepted {
                     previous_owner: old_owner,
@@ -2057,7 +2059,7 @@ mod open_payroll {
             let (accounts, mut contract) = create_accounts_and_contract(100_000_001u128);
 
             // check no transfered ownership was called yet
-            assert_eq!(contract.transfered_owner, None);
+            assert_eq!(contract.proposed_owner, None);
             // check if owner is alice
             assert_eq!(contract.owner, accounts.alice);
 
@@ -2067,7 +2069,7 @@ mod open_payroll {
             assert!(transfer_ownership_result.is_ok());
 
             // check if owner is bob
-            assert_eq!(contract.transfered_owner, Some(accounts.bob));
+            assert_eq!(contract.proposed_owner, Some(accounts.bob));
 
             // accept ownership
             set_sender(accounts.bob);
@@ -2075,7 +2077,7 @@ mod open_payroll {
             assert!(accept_ownsership_result.is_ok());
 
             assert_eq!(contract.owner, accounts.bob);
-            assert_eq!(contract.transfered_owner, None);
+            assert_eq!(contract.proposed_owner, None);
         }
 
         // Check if dispatch error when adding more beneficiaries allowed from creation
