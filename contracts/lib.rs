@@ -45,11 +45,11 @@ mod open_payroll {
 
     /// Emiited when the ownership of the contract is transferred
     #[ink(event)]
-    pub struct OwnershipTransferred {
+    pub struct OwnershipProposed {
         #[ink(topic)]
-        previous_owner: AccountId,
+        current_owner: AccountId,
         #[ink(topic)]
-        new_owner: AccountId,
+        proposed_owner: AccountId,
     }
 
     /// Emitted when the ownership of the contract is accepted
@@ -473,14 +473,14 @@ mod open_payroll {
         /// Change ownership of the contract
         /// This is proposing a new owner that has to accept the ownership
         #[ink(message)]
-        pub fn transfer_ownership(&mut self, new_owner: AccountId) -> Result<(), Error> {
+        pub fn propose_transfer_ownership(&mut self, new_owner: AccountId) -> Result<(), Error> {
             self.ensure_owner()?;
             self.transfered_owner = Some(new_owner);
 
             // Emit the OwnershipTransferred event
-            self.env().emit_event(OwnershipTransferred {
-                previous_owner: self.owner,
-                new_owner,
+            self.env().emit_event(OwnershipProposed {
+                current_owner: self.owner,
+                proposed_owner: new_owner,
             });
 
             Ok(())
@@ -2031,7 +2031,9 @@ mod open_payroll {
                     .unwrap();
             }
 
-            assert_eq!(contract.get_amount_beneficiaries(), max_beneficiaries);
+            let contract_beneficiaries = contract.beneficiaries_accounts.len() as u8;
+
+            assert_eq!(contract_beneficiaries, max_beneficiaries);
 
             // try to add one more beneficiary
             let res = contract.add_beneficiary(AccountId::from([255u8; 32]), vec![]);
@@ -2061,7 +2063,7 @@ mod open_payroll {
 
             // change owner to bob
             set_sender(accounts.alice);
-            let transfer_ownership_result = contract.transfer_ownership(accounts.bob);
+            let transfer_ownership_result = contract.propose_transfer_ownership(accounts.bob);
             assert!(transfer_ownership_result.is_ok());
 
             // check if owner is bob
