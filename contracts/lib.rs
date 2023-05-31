@@ -10,11 +10,102 @@ mod open_payroll {
     use ink::storage::traits::StorageLayout;
     use ink::storage::Mapping;
 
+    // Define the types that will be used in the contract
     type Multiplier = u128;
     type MultiplierId = u32;
+    // Establish the maximum number of beneficiaries and multipliers that can be added to the contract
     const MAX_BENEFICIARIES: usize = 100;
     const MAX_MULTIPLIERS: usize = 10;
 
+    /// Emitted when a beneficiary claims their payment
+    #[ink(event)]
+    pub struct Claimed {
+        #[ink(topic)]
+        account_id: AccountId,
+        amount: Balance,
+        total_payment: Balance,
+        claiming_period_block: BlockNumber,
+    }
+
+    /// Emitted when a multiplier is deactivated
+    #[ink(event)]
+    pub struct MultiplierDeactivated {
+        #[ink(topic)]
+        multiplier_id: MultiplierId,
+        valid_until_block: BlockNumber,
+    }
+
+    /// Emitted when a multiplier is deleted
+    #[ink(event)]
+    pub struct MultiplierDeleted {
+        #[ink(topic)]
+        multiplier_id: MultiplierId,
+        valid_until_block: BlockNumber,
+    }
+
+    /// Emiited when the ownership of the contract is transferred
+    #[ink(event)]
+    pub struct OwnershipProposed {
+        #[ink(topic)]
+        current_owner: AccountId,
+        #[ink(topic)]
+        proposed_owner: AccountId,
+    }
+
+    /// Emitted when the ownership of the contract is accepted
+    #[ink(event)]
+    pub struct OwnershipAccepted {
+        #[ink(topic)]
+        previous_owner: AccountId,
+        #[ink(topic)]
+        new_owner: AccountId,
+    }
+
+    /// Emitted when a beneficiary is added
+    #[ink(event)]
+    pub struct BeneficiaryAdded {
+        #[ink(topic)]
+        account_id: AccountId,
+        multipliers_vec: Vec<(MultiplierId, Multiplier)>,
+    }
+
+    /// Emitted when a beneficiary is updated
+    #[ink(event)]
+    pub struct BeneficiaryUpdated {
+        #[ink(topic)]
+        account_id: AccountId,
+        multipliers_vec: Vec<(MultiplierId, Multiplier)>,
+    }
+
+    /// Emitted when a beneficiary is removed
+    #[ink(event)]
+    pub struct BeneficiaryRemoved {
+        #[ink(topic)]
+        account_id: AccountId,
+    }
+
+    /// Emitted when a multiplier is added
+    #[ink(event)]
+    pub struct BaseMultiplierAdded {
+        multiplier_id: MultiplierId,
+        name: String,
+    }
+
+    /// Emitted when the preiodicity is updated
+    #[ink(event)]
+    pub struct PeriodicityUpdated {
+        periodicity: u32,
+    }
+
+    /// Emitted when the contract is paused
+    #[ink(event)]
+    pub struct Paused {}
+
+    /// Emitted when the contract is resumed
+    #[ink(event)]
+    pub struct Resumed {}
+
+    /// Base multiplier structure containg a name and an option block number for being used when deactivating the multiplier
     #[derive(scale::Encode, scale::Decode, Eq, PartialEq, Debug, Clone)]
     #[cfg_attr(feature = "std", derive(scale_info::TypeInfo, StorageLayout))]
     pub struct BaseMultiplier {
@@ -30,6 +121,7 @@ mod open_payroll {
         }
     }
 
+    /// Beneficiary structure containing the account id, the multipliers, the unclaimed payments, and the last updated period block
     #[derive(scale::Encode, scale::Decode, Eq, PartialEq, Debug, Clone)]
     #[cfg_attr(feature = "std", derive(scale_info::TypeInfo, StorageLayout,))]
     pub struct Beneficiary {
@@ -39,6 +131,7 @@ mod open_payroll {
         last_updated_period_block: BlockNumber,
     }
 
+    /// Initial beneficiary structure containing the account id and the multipliers
     #[derive(scale::Encode, scale::Decode, Eq, PartialEq, Debug, Clone)]
     #[cfg_attr(feature = "std", derive(scale_info::TypeInfo, StorageLayout))]
     pub struct InitialBeneficiary {
@@ -47,6 +140,7 @@ mod open_payroll {
         multipliers: Vec<(MultiplierId, Multiplier)>,
     }
 
+    /// Claims in period structure containing the period and the total claims
     #[derive(scale::Encode, scale::Decode, Eq, PartialEq, Debug, Clone)]
     #[cfg_attr(feature = "std", derive(scale_info::TypeInfo, StorageLayout))]
     pub struct ClaimsInPeriod {
@@ -54,12 +148,20 @@ mod open_payroll {
         total_claims: u32,
     }
 
-    //TODO: Explain that AccountIds in mapping and vector are the same
-    // Same with MultiplierIds and BaseMultipliers
+    /// OpenPayroll contract structure containing the owner, the beneficiaries, the multipliers, the base payment, the periodicity,
+    /// the initial block, the last updated block, the claims in period, the paused state, and the base multipliers
+    // The presence of redundant information between the 'AccountsIds' in 'beneficiaries' and 'beneficiaries_accounts' is intentional.
+    // Although they represent the same account, this redundancy is maintained in order to support efficient iteration over
+    // 'beneficiaries_accounts' while fetching a beneficiary. By duplicating the account IDs, we achieve a constant time complexity of
+    // O(1) when accessing beneficiary information directly from 'beneficiaries_accounts'.
+    // Similarly, the redundancy in iterating over both 'MultiplierIds' in 'multipliers_list' and 'BaseMultipliers' is intentional for
+    // improved access to the 'BaseMultiplier' field. Although 'MultiplierIds' could directly link to the corresponding 'BaseMultiplier',
+    // maintaining both lists allows for efficient iteration over 'multipliers_list' while accessing the 'BaseMultiplier' values.
+    // This design choice enables streamlined retrieval of relevant multiplier information without compromising performance.
     #[ink(storage)]
     pub struct OpenPayroll {
         /// The account to be transfered to, until the new owner accept it
-        transfered_owner: Option<AccountId>,
+        proposed_owner: Option<AccountId>,
         /// The accountId of the creator of the contract, who has 'priviliged' access to do administrative tasks
         owner: AccountId,
         /// Mapping from the accountId to the beneficiary information
@@ -84,7 +186,10 @@ mod open_payroll {
         claims_in_period: ClaimsInPeriod,
     }
 
+    /// implementation of the OpenPayroll contract
     impl OpenPayroll {
+        /// Constructor that initializes the owner, the base payment, the periodicity, the initial block, the base multipliers,
+        /// and the initial beneficiaries
         #[ink(constructor, payable)]
         pub fn new(
             periodicity: u32,
@@ -93,22 +198,24 @@ mod open_payroll {
             initial_beneficiaries: Vec<InitialBeneficiary>,
         ) -> Result<Self, Error> {
             let initial_block_number = Self::env().block_number();
-            let transfered_owner = None;
+            let proposed_owner = None;
             let owner = Self::env().caller();
             let mut next_multiplier_id = 0;
 
-            if base_payment <= 0 || periodicity == 0 {
+            // 0 payment or 0 periodicity make no sense
+            if base_payment == 0 || periodicity == 0 {
                 return Err(Error::InvalidParams);
             }
 
+            // Check for duplicate beneficiaries
             check_no_duplicate_beneficiaries(
                 &initial_beneficiaries.iter().map(|b| b.account_id).collect(),
             )?;
 
+            // Check beneficiaries and multipliers limits
             if initial_beneficiaries.len() > MAX_BENEFICIARIES {
                 return Err(Error::MaxBeneficiariesExceeded);
             }
-
             if initial_base_multipliers.len() > MAX_MULTIPLIERS {
                 return Err(Error::MaxMultipliersExceeded);
             }
@@ -134,6 +241,7 @@ mod open_payroll {
                     return Err(Error::InvalidMultipliersLength);
                 }
 
+                // Check for duplicate multipliers
                 check_no_duplicate_multipliers(&beneficiary_data.multipliers)?;
 
                 let multipliers = vec_to_btreemap(&beneficiary_data.multipliers);
@@ -149,13 +257,14 @@ mod open_payroll {
                 accounts.push(beneficiary_data.account_id);
             }
 
+            // Defines the claims in period
             let claims_in_period = ClaimsInPeriod {
                 period: 0,
                 total_claims: 0,
             };
 
             Ok(Self {
-                transfered_owner,
+                proposed_owner,
                 owner,
                 beneficiaries,
                 periodicity,
@@ -171,7 +280,8 @@ mod open_payroll {
         }
 
         /// Claim payment for a single account id
-        /// TODO: Add comment explaining what happens when amount is 0
+        // If the amount is 0 no money is transferred. However, the "unclaimed_payments" field is set to the total
+        // value that the beneficiary has yet to claim.
         #[ink(message)]
         pub fn claim_payment(
             &mut self,
@@ -180,7 +290,7 @@ mod open_payroll {
         ) -> Result<(), Error> {
             self.ensure_is_not_paused()?;
 
-            let beneficiary_res = self.beneficiaries.get(&account_id);
+            let beneficiary_res = self.beneficiaries.get(account_id);
 
             let mut beneficiary = match beneficiary_res {
                 Some(b) => b,
@@ -191,18 +301,22 @@ mod open_payroll {
 
             // If there are deactivated multipliers, remove them from the beneficiary
             beneficiary.multipliers.retain(|&k, _| {
-                let a = self.base_multipliers.get(&k).unwrap().valid_until_block;
+                let multiplier_block_validity =
+                    self.base_multipliers.get(k).unwrap().valid_until_block;
 
                 // We keep the multiplier if it is not deactivated
                 // or if it is deactivated but the current block is before the deactivation block
-                a.is_none() || a.unwrap() > current_block
+                multiplier_block_validity.is_none()
+                    || multiplier_block_validity.unwrap() > current_block
             });
 
+            // gets the total amount that the beneficiary can claim and check the amount is not bigger than that
             let total_payment = self._get_amount_to_claim(account_id, true);
             if amount > total_payment {
                 return Err(Error::ClaimedAmountIsBiggerThanAvailable);
             }
 
+            // Check if the treasury has enough balance
             let treasury_balance = self.env().balance();
             if amount > treasury_balance {
                 return Err(Error::NotEnoughBalanceInTreasury);
@@ -215,6 +329,7 @@ mod open_payroll {
                 self._update_claims_in_period(claiming_period_block);
             }
 
+            // Update the beneficiary
             self.beneficiaries.insert(
                 account_id,
                 &Beneficiary {
@@ -226,33 +341,52 @@ mod open_payroll {
             );
 
             // Transfer the amount to the beneficiary if amount > 0
-            if amount > 0 {
-                if let Err(_) = self.env().transfer(account_id, amount) {
-                    return Err(Error::TransferFailed);
-                }
+            if amount > 0 && self.env().transfer(account_id, amount).is_err() {
+                return Err(Error::TransferFailed);
             }
+
+            // Emit the Claimed event
+            self.env().emit_event(Claimed {
+                account_id,
+                amount,
+                total_payment,
+                claiming_period_block,
+            });
 
             Ok(())
         }
 
+        /// Deactivate a multiplier
+        /// It can be deleted one period after deactivation if every beneficiary has claimed the payment
         #[ink(message)]
         pub fn deactivate_multiplier(&mut self, multiplier_id: MultiplierId) -> Result<(), Error> {
+            // Fetch the multiplier
             let mut multiplier = self
                 .base_multipliers
-                .get(&multiplier_id)
+                .get(multiplier_id)
                 .ok_or(Error::MultiplierNotFound)?;
+            // Check if the multiplier is already deactivated
             if multiplier.valid_until_block.is_some() {
                 return Err(Error::MultiplierAlreadyDeactivated);
             }
 
+            // Calculates deactivation on next period
             let valid_until_block = self.get_current_period_initial_block() + self.periodicity;
 
+            // Set that value in the multiplier
             multiplier.valid_until_block = Some(valid_until_block);
             self.base_multipliers.insert(multiplier_id, &multiplier);
+
+            // Emit the MultiplierDeactivated event
+            self.env().emit_event(MultiplierDeactivated {
+                multiplier_id,
+                valid_until_block,
+            });
 
             Ok(())
         }
 
+        /// Delete a multiplier when conditions are met
         #[ink(message)]
         pub fn delete_unused_multiplier(
             &mut self,
@@ -261,24 +395,33 @@ mod open_payroll {
             let current_block = self.env().block_number();
             let multiplier = self
                 .base_multipliers
-                .get(&multiplier_id)
+                .get(multiplier_id)
                 .ok_or(Error::MultiplierNotFound)?;
 
+            // Check if the multiplier is already deactivated
             if multiplier.valid_until_block.is_none() {
                 return Err(Error::MultiplierNotDeactivated);
             }
 
+            // Check if the multiplier is expired
             if current_block > multiplier.valid_until_block.unwrap() {
                 return Err(Error::MultiplierNotExpired);
             }
 
+            // Check if all beneficiaries have claimed the payment
             self.ensure_all_claimed_in_period()?;
 
             // Remove multiplier from multipliers_list
             self.multipliers_list.retain(|x| *x != multiplier_id);
 
             // Remove multiplier from base_multipliers
-            self.base_multipliers.remove(&multiplier_id);
+            self.base_multipliers.remove(multiplier_id);
+
+            // Emit the MultiplierDeleted event
+            self.env().emit_event(MultiplierDeleted {
+                multiplier_id,
+                valid_until_block: multiplier.valid_until_block.unwrap(),
+            });
 
             Ok(())
         }
@@ -293,7 +436,9 @@ mod open_payroll {
             Ok(())
         }
 
-        fn is_paused(&self) -> bool {
+        /// Reads the paused state from the contract
+        #[ink(message)]
+        pub fn is_paused(&self) -> bool {
             self.paused_block_at.is_some()
         }
 
@@ -305,9 +450,10 @@ mod open_payroll {
             Ok(())
         }
 
+        // Check multipliers are valid
         fn check_multipliers_are_valid(
             &self,
-            multipliers: &Vec<(MultiplierId, Multiplier)>,
+            multipliers: &[(MultiplierId, Multiplier)],
         ) -> Result<(), Error> {
             for (multiplier_id, _) in multipliers.iter() {
                 if !self.base_multipliers.contains(multiplier_id) {
@@ -326,40 +472,53 @@ mod open_payroll {
             Ok(())
         }
 
-        // Change ownership of the contract
+        /// Change ownership of the contract
+        /// This is proposing a new owner that has to accept the ownership
         #[ink(message)]
-        pub fn transfer_ownership(&mut self, new_owner: AccountId) -> Result<(), Error> {
+        pub fn propose_transfer_ownership(&mut self, new_owner: AccountId) -> Result<(), Error> {
             self.ensure_owner()?;
-            self.transfered_owner = Some(new_owner);
+            self.proposed_owner = Some(new_owner);
+
+            // Emit the OwnershipTransferred event
+            self.env().emit_event(OwnershipProposed {
+                current_owner: self.owner,
+                proposed_owner: new_owner,
+            });
+
             Ok(())
         }
 
-        // Accept ownership of the contract
+        /// Accept ownership of the contract
+        /// Once the ownership is proposed by transfer_ownsership function it needs to be accepted
+        /// by the new owner. This prevents accidental ownership transfers.
         #[ink(message)]
         pub fn accept_ownership(&mut self) -> Result<(), Error> {
-            if self.transfered_owner == Some(self.env().caller()) {
-                self.owner = self.transfered_owner.unwrap();
-                self.transfered_owner = None;
+            let old_owner = self.owner;
+            if self.proposed_owner == Some(self.env().caller()) {
+                self.owner = self.proposed_owner.unwrap();
+                self.proposed_owner = None;
+
+                self.env().emit_event(OwnershipAccepted {
+                    previous_owner: old_owner,
+                    new_owner: self.owner,
+                });
+
                 Ok(())
             } else {
                 Err(Error::NotOwner)
             }
         }
 
-        /// Add a new beneficiary or modify the multiplier of an existing one.
-        /// TODO: maybe split this function in two
-        /// TODO: Check that all the accounts are different
-        /// TODO check multipliers integrity and validate them
-        #[ink(message)]
-        pub fn add_beneficiary(
-            &mut self,
+        // Function for doing the checking before adding a new beneficiary
+        fn check_beneficiary_to_add(
+            &self,
             account_id: AccountId,
-            multipliers: Vec<(MultiplierId, Multiplier)>,
+            multipliers: &[(MultiplierId, Multiplier)],
         ) -> Result<(), Error> {
             self.ensure_owner()?;
 
             // Check that the beneficiary does not exist
-            if self.beneficiaries.contains(&account_id) {
+            if self.beneficiaries.contains(account_id) {
                 return Err(Error::AccountAlreadyExists);
             }
 
@@ -369,11 +528,26 @@ mod open_payroll {
             }
 
             // Check that the multipliers are valid
-            self.check_multipliers_are_valid(&multipliers)?;
-            check_no_duplicate_multipliers(&multipliers)?;
+            self.check_multipliers_are_valid(multipliers)?;
+            check_no_duplicate_multipliers(&std::vec::Vec::from(multipliers))?;
 
+            Ok(())
+        }
+
+        /// Add a new beneficiary
+        #[ink(message)]
+        pub fn add_beneficiary(
+            &mut self,
+            account_id: AccountId,
+            multipliers: Vec<(MultiplierId, Multiplier)>,
+        ) -> Result<(), Error> {
+            // Calls the function to do the checking
+            self.check_beneficiary_to_add(account_id, &multipliers)?;
+
+            let multipliers_vec = multipliers.clone();
             let multipliers = vec_to_btreemap(&multipliers);
 
+            // insert the new beneficiary
             self.beneficiaries.insert(
                 account_id,
                 &Beneficiary {
@@ -384,7 +558,14 @@ mod open_payroll {
                 },
             );
 
+            // Add the beneficiary to the list of beneficiaries
             self.beneficiaries_accounts.push(account_id);
+
+            // Emit the BeneficiaryAdded event
+            self.env().emit_event(BeneficiaryAdded {
+                account_id,
+                multipliers_vec,
+            });
 
             Ok(())
         }
@@ -399,23 +580,21 @@ mod open_payroll {
             self.ensure_owner()?;
 
             // Check that the beneficiary exists
-            if !self.beneficiaries.contains(&account_id) {
+            if !self.beneficiaries.contains(account_id) {
                 return Err(Error::AccountNotFound);
-            }
-
-            // Check that the number of beneficiaries does not exceed the maximum
-            if self.beneficiaries_accounts.len() + 1 > MAX_BENEFICIARIES {
-                return Err(Error::MaxBeneficiariesExceeded);
             }
 
             // Check that the multipliers are valid
             self.check_multipliers_are_valid(&multipliers)?;
             check_no_duplicate_multipliers(&multipliers)?;
 
+            let multipliers_vec = multipliers.clone();
             let multipliers = vec_to_btreemap(&multipliers);
 
+            // calculate the amount to claim to be transferred to the uncleared payments
             let unclaimed_payments = self._get_amount_to_claim(account_id, false);
 
+            // update de beneficiary with new multipliers and new unclaimed payments
             self.beneficiaries.insert(
                 account_id,
                 &Beneficiary {
@@ -426,7 +605,11 @@ mod open_payroll {
                 },
             );
 
-            self.beneficiaries_accounts.push(account_id);
+            // Emit the BeneficiaryUpdated event
+            self.env().emit_event(BeneficiaryUpdated {
+                account_id,
+                multipliers_vec,
+            });
 
             Ok(())
         }
@@ -435,26 +618,22 @@ mod open_payroll {
         #[ink(message)]
         pub fn remove_beneficiary(&mut self, account_id: AccountId) -> Result<(), Error> {
             self.ensure_owner()?;
-            if !self.beneficiaries.contains(&account_id) {
+            if !self.beneficiaries.contains(account_id) {
                 return Err(Error::AccountNotFound);
             }
-            self.beneficiaries.remove(&account_id);
+            self.beneficiaries.remove(account_id);
 
-            // Get the index of the beneficiary.
-            // It will always be in the vector
-            let beneficiary_index = self
-                .beneficiaries_accounts
-                .iter()
-                .position(|x| *x == account_id)
-                .unwrap();
+            // Remove the beneficiary from the list of beneficiaries
+            self.beneficiaries_accounts.retain(|x| *x != account_id);
 
-            // Remove the beneficiary from the vector
-            self.beneficiaries_accounts.remove(beneficiary_index);
+            // Emit the BeneficiaryRemoved event
+            self.env().emit_event(BeneficiaryRemoved { account_id });
 
             Ok(())
         }
 
         /// Update the base_payment
+        /// It makes sense once all the beneficiaries have claimed their payments
         #[ink(message)]
         pub fn update_base_payment(&mut self, base_payment: Balance) -> Result<(), Error> {
             self.ensure_owner()?;
@@ -463,7 +642,6 @@ mod open_payroll {
             }
 
             //check if all payments are up to date
-            //self.ensure_all_payments_uptodate()?;
             self.ensure_all_claimed_in_period()?;
             self.base_payment = base_payment;
 
@@ -471,6 +649,7 @@ mod open_payroll {
         }
 
         /// Add a new base multiplier
+        /// It's not checking for duplicates because it's just a string
         #[ink(message)]
         pub fn add_base_multiplier(&mut self, name: String) -> Result<(), Error> {
             self.ensure_owner()?;
@@ -480,19 +659,30 @@ mod open_payroll {
                 return Err(Error::MaxMultipliersExceeded);
             }
 
-            let base_multiplier = BaseMultiplier::new(name);
+            let base_multiplier = BaseMultiplier::new(name.clone());
 
             self.base_multipliers
                 .insert(self.next_multiplier_id, &base_multiplier);
 
             self.multipliers_list.push(self.next_multiplier_id);
 
-            self.next_multiplier_id += 1;
+            // Increment the next_multiplier_id checking for overflow
+            self.next_multiplier_id = match self.next_multiplier_id.checked_add(1) {
+                Some(val) => val,
+                None => return Err(Error::Overflow),
+            };
+
+            // Emit the BaseMultiplierAdded event
+            self.env().emit_event(BaseMultiplierAdded {
+                multiplier_id: self.next_multiplier_id - 1,
+                name,
+            });
 
             Ok(())
         }
 
-        /// Update the periodicity
+        /// Update the periodicity of the payments
+        /// All payments must be claimed before updating the periodicity
         #[ink(message)]
         pub fn update_periodicity(&mut self, periodicity: u32) -> Result<(), Error> {
             self.ensure_owner()?;
@@ -505,22 +695,26 @@ mod open_payroll {
             self.ensure_all_claimed_in_period()?;
             self.periodicity = periodicity;
 
+            // Emit the PeriodicityUpdated event
+            self.env().emit_event(PeriodicityUpdated { periodicity });
+
             Ok(())
         }
 
         /// Check if all payments up to date or storage unclaiumed_payments is up-to-date
         #[ink(message)]
         pub fn ensure_all_payments_uptodate(&self) -> Result<(), Error> {
-            let current_block = self.env().block_number();
+            let claimed_period_block = self.get_current_period_initial_block();
 
+            // iterates over each account_id
             for account_id in self.beneficiaries_accounts.iter() {
                 let beneficiary = self.beneficiaries.get(account_id).unwrap();
-                let claimed_period_block =
-                    current_block - ((current_block - self.initial_block) % self.periodicity);
+
                 if claimed_period_block > beneficiary.last_updated_period_block {
                     return Err(Error::PaymentsNotUpToDate);
                 }
             }
+
             Ok(())
         }
 
@@ -532,7 +726,7 @@ mod open_payroll {
             block: BlockNumber,
         ) -> Balance {
             // The check that beneficiary exists is done in the caller function
-            let beneficiary = self.beneficiaries.get(&account_id).unwrap();
+            let beneficiary = self.beneficiaries.get(account_id).unwrap();
 
             // Calculates the number of blocks that have elapsed since the last payment
             let blocks_since_last_payment = block - beneficiary.last_updated_period_block;
@@ -540,13 +734,15 @@ mod open_payroll {
             // Calculates the number of periods that are due based on the elapsed blocks
             let unclaimed_periods: u128 = (blocks_since_last_payment / self.periodicity).into();
 
+            // If there's no unclaimed periods, return the unclaimed payments
+            // Otherwise, calculate the amount to claim and add the unclaimed payments
             if unclaimed_periods == 0 {
                 beneficiary.unclaimed_payments
             } else {
                 let payment_per_period =
                     self._get_amount_to_claim_for_one_period(&beneficiary, filtered_multipliers);
 
-                payment_per_period * unclaimed_periods as u128 + beneficiary.unclaimed_payments
+                payment_per_period * unclaimed_periods + beneficiary.unclaimed_payments
             }
         }
 
@@ -563,7 +759,7 @@ mod open_payroll {
                 1
             } else {
                 match filtered_multipliers {
-                    true => beneficiary.multipliers.iter().map(|(_, v)| v).sum(),
+                    true => beneficiary.multipliers.values().sum(),
                     _ => beneficiary
                         .multipliers
                         .iter()
@@ -582,7 +778,8 @@ mod open_payroll {
             final_multiplier * self.base_payment / 100
         }
 
-        /// Filtered multipliers in true means that all multipliers are active
+        /// internal function to get the amount to claim
+        /// filtered multipliers in true means that all multipliers are active
         fn _get_amount_to_claim(
             &self,
             account_id: AccountId,
@@ -594,15 +791,21 @@ mod open_payroll {
         }
 
         /// Get amount in storage without transferring the funds
+        /// Read Only function
         #[ink(message)]
         pub fn get_amount_to_claim(&self, account_id: AccountId) -> Result<Balance, Error> {
-            if !self.beneficiaries.contains(&account_id) {
+            if !self.beneficiaries.contains(account_id) {
                 return Err(Error::AccountNotFound);
             }
 
-            Ok(self._get_amount_to_claim(account_id, false))
+            let result = self._get_amount_to_claim(account_id, false);
+
+            Ok(result)
         }
 
+        /// Updates the number of claims in a period
+        /// If the period is the same, it increments the number of claims
+        /// Otherwise, it resets the number of claims and set it to 1
         fn _update_claims_in_period(&mut self, claiming_period_block: BlockNumber) {
             if claiming_period_block == self.claims_in_period.period {
                 // Updates current claims in period
@@ -614,6 +817,7 @@ mod open_payroll {
             }
         }
 
+        /// check if all beneficiaries claimed in period
         fn ensure_all_claimed_in_period(&mut self) -> Result<(), Error> {
             let claiming_period_block = self.get_current_period_initial_block();
 
@@ -627,16 +831,11 @@ mod open_payroll {
                 return Ok(());
             }
 
-            return Err(Error::NotAllClaimedInPeriod);
-        }
-
-        /// Calculate outstanding payments for the entire DAO -- this call can be expensive!!!
-        #[ink(message)]
-        pub fn calculate_outstanding_payments(&self) -> Result<Balance, Error> {
-            todo!();
+            Err(Error::NotAllClaimedInPeriod)
         }
 
         /// Pause the contract
+        /// Pausing will only avoid to call the claim function
         #[ink(message)]
         pub fn pause(&mut self) -> Result<(), Error> {
             self.ensure_owner()?;
@@ -644,10 +843,12 @@ mod open_payroll {
                 return Ok(());
             }
             self.paused_block_at = Some(self.env().block_number());
+            self.env().emit_event(Paused {});
             Ok(())
         }
 
         /// Resume the contract
+        /// Resuming will allow to call the claim function
         #[ink(message)]
         pub fn resume(&mut self) -> Result<(), Error> {
             self.ensure_owner()?;
@@ -655,56 +856,55 @@ mod open_payroll {
                 return Ok(());
             }
             self.paused_block_at = None;
+            self.env().emit_event(Resumed {});
             Ok(())
         }
 
         /// Get beneficiary only read
-        /// read-only
+        /// Read Only function
         #[ink(message)]
         pub fn get_beneficiary(&mut self, account_id: AccountId) -> Result<Beneficiary, Error> {
-            if !self.beneficiaries.contains(&account_id) {
+            if !self.beneficiaries.contains(account_id) {
                 return Err(Error::AccountNotFound);
             }
-            let beneficiary = self.beneficiaries.get(&account_id).unwrap();
+            let beneficiary = self.beneficiaries.get(account_id).unwrap();
             Ok(beneficiary)
         }
 
-        /// get current block period
-        /// read-only
+        /// Get current block period
+        /// Read Only function
+        // The calculation current_block - ((current_block - self.initial_block) % self.periodicity) might be a bit tricky to understand at first glance.
+        // Let's use an example to understand it. Assume self.initial_block to be 10, self.periodicity to be 20, and the current_block to be 65.
+        // current_block - self.initial_block = 65 - 10 = 55 55 % self.periodicity = 55 % 20 = 15.
+        // This gives us the number of blocks past the last "period start" in relation to initial_block and periodicity.  current_block - 15 = 65 - 15 = 50.
+        // This is the block number where the current period started.
         #[ink(message)]
         pub fn get_current_period_initial_block(&self) -> BlockNumber {
             let current_block = self.env().block_number();
-            let claiming_period_block =
-                current_block - ((current_block - self.initial_block) % self.periodicity);
-            claiming_period_block
+            current_block - ((current_block - self.initial_block) % self.periodicity)
         }
 
-        /// get next block period
+        /// Get next block period
         #[ink(message)]
         pub fn get_next_block_period(&self) -> BlockNumber {
             self.get_current_period_initial_block() + self.periodicity
         }
 
-        /// get all the debts up-to-date
-        /// read-only
+        /// Get all the debts up-to-date
+        /// Read Only function
         #[ink(message)]
         pub fn get_total_debts(&self) -> Balance {
-            let claiming_period_block = self.get_current_period_initial_block();
-
             let mut debts = 0;
             for account_id in self.beneficiaries_accounts.iter() {
                 let beneficiary = self.beneficiaries.get(account_id).unwrap();
-                if beneficiary.last_updated_period_block < claiming_period_block {
-                    let amount = self._get_amount_to_claim(beneficiary.account_id, false);
-                    debts += amount;
-                }
+                debts += self._get_amount_to_claim(beneficiary.account_id, false);
             }
 
             debts
         }
 
-        /// get all the debts up-to-date
-        /// read-only
+        /// Get all the debts for the next period
+        /// Read Only function
         #[ink(message)]
         pub fn get_total_debt_for_next_period(&self) -> Balance {
             let mut total = 0;
@@ -717,8 +917,8 @@ mod open_payroll {
             total
         }
 
-        /// get all the debts up-to-date
-        /// read-only
+        /// Get all the debts including unclaimed for the next period
+        /// Read Only function
         #[ink(message)]
         pub fn get_total_debt_with_unclaimed_for_next_period(&self) -> Balance {
             let block_next_period = self.get_next_block_period();
@@ -733,41 +933,37 @@ mod open_payroll {
             total
         }
 
-        // count of beneficiaries
-        /// read-only
+        /// Get all the beneficiaries
+        /// Read Only function
         #[ink(message)]
-        pub fn get_amount_beneficiaries(&self) -> u8 {
-            self.beneficiaries_accounts.len() as u8
-        }
-
-        /// get list of payees
-        /// read-only
-        #[ink(message)]
-        pub fn get_list_payees(&self) -> Vec<AccountId> {
+        pub fn get_list_beneficiaries(&self) -> Vec<AccountId> {
             self.beneficiaries_accounts.clone()
         }
 
-        /// get contract balance
-        /// read-only
+        /// Get contract balance
+        /// Read Only function
         #[ink(message)]
         pub fn get_contract_balance(&self) -> Balance {
             self.env().balance()
         }
 
-        /// get total balance after paying debts
-        /// read-only
+        /// Get total balance after paying debts
+        /// Read Only function
         #[ink(message)]
         pub fn get_balance_with_debts(&self) -> Balance {
             self.get_contract_balance() - self.get_total_debts()
         }
 
-        /// get list of unclaimed beneficiaries
-        /// read-only
+        /// Get list of unclaimed beneficiaries
+        /// Read Only function
         #[ink(message)]
         pub fn get_unclaimed_beneficiaries(&self) -> Vec<AccountId> {
             let claiming_period_block = self.get_current_period_initial_block();
 
             let mut unclaimed_beneficiaries = Vec::new();
+            // iterate over all beneficiaries
+            // if last_updated_period_block < claiming_period_block
+            // then add to unclaimed_beneficiaries
             for account_id in self.beneficiaries_accounts.iter() {
                 let beneficiary = self.beneficiaries.get(account_id).unwrap();
                 if beneficiary.last_updated_period_block < claiming_period_block {
@@ -778,8 +974,8 @@ mod open_payroll {
             unclaimed_beneficiaries
         }
 
-        /// get count of unclaimed beneficiaries
-        /// read-only
+        /// Get count of unclaimed beneficiaries
+        /// Read Only function
         #[ink(message)]
         pub fn get_count_of_unclaim_beneficiaries(&self) -> u8 {
             let claiming_period_block = self.get_current_period_initial_block();
@@ -799,9 +995,8 @@ mod open_payroll {
     /// Pure functions
     /// ---------------------------------------------------------------
 
-    fn vec_to_btreemap(
-        vec: &Vec<(MultiplierId, Multiplier)>,
-    ) -> BTreeMap<MultiplierId, Multiplier> {
+    /// Given a vector of (id, multiplier) pairs, return a BTreeMap of (id, multiplier) pairs
+    fn vec_to_btreemap(vec: &[(MultiplierId, Multiplier)]) -> BTreeMap<MultiplierId, Multiplier> {
         let mut btree_map = BTreeMap::new();
         for (id, multiplier) in vec.iter() {
             btree_map.insert(*id, *multiplier);
@@ -809,6 +1004,8 @@ mod open_payroll {
         btree_map
     }
 
+    /// Given a list of beneficiaries it checks there are no duplicates
+    #[allow(clippy::all)]
     fn check_no_duplicate_beneficiaries(beneficiaries: &Vec<AccountId>) -> Result<(), Error> {
         let mut sorted_beneficiaries = beneficiaries.clone();
         sorted_beneficiaries.sort_by_key(|&beneficiary| beneficiary);
@@ -822,6 +1019,8 @@ mod open_payroll {
         Ok(())
     }
 
+    /// Given a list of multipliers it checks there are no duplicates
+    #[allow(clippy::all)]
     fn check_no_duplicate_multipliers(
         multipliers: &Vec<(MultiplierId, Multiplier)>,
     ) -> Result<(), Error> {
@@ -949,7 +1148,7 @@ mod open_payroll {
         }
 
         fn vec_to_btreemap(
-            vec: &Vec<(MultiplierId, Multiplier)>,
+            vec: &[(MultiplierId, Multiplier)],
         ) -> BTreeMap<MultiplierId, Multiplier> {
             let mut btree_map = BTreeMap::new();
             for (id, multiplier) in vec.iter() {
@@ -1005,13 +1204,13 @@ mod open_payroll {
             );
 
             // check that beneficiaries are set correctly
-            let data_bob = contract.beneficiaries.get(&accounts.bob).unwrap();
-            let data_charlie = contract.beneficiaries.get(&accounts.charlie).unwrap();
+            let data_bob = contract.beneficiaries.get(accounts.bob).unwrap();
+            let data_charlie = contract.beneficiaries.get(accounts.charlie).unwrap();
             assert_eq!(
                 data_bob,
                 Beneficiary {
                     account_id: accounts.bob,
-                    multipliers: vec_to_btreemap(&vec![(0, 100), (1, 3)]),
+                    multipliers: vec_to_btreemap(&[(0, 100), (1, 3)]),
                     unclaimed_payments: 0,
                     last_updated_period_block: 0,
                 }
@@ -1020,7 +1219,7 @@ mod open_payroll {
                 data_charlie,
                 Beneficiary {
                     account_id: accounts.charlie,
-                    multipliers: vec_to_btreemap(&vec![(0, 100), (1, 10)]),
+                    multipliers: vec_to_btreemap(&[(0, 100), (1, 10)]),
                     unclaimed_payments: 0,
                     last_updated_period_block: 0,
                 }
@@ -1155,10 +1354,10 @@ mod open_payroll {
             assert_eq!(
                 contract
                     .beneficiaries
-                    .get(&accounts.bob)
+                    .get(accounts.bob)
                     .unwrap()
                     .multipliers,
-                vec_to_btreemap(&vec![(0, 200), (1, 100)])
+                vec_to_btreemap(&[(0, 200), (1, 100)])
             );
             contract
                 .update_beneficiary(accounts.bob, vec![(0, 200), (1, 50)])
@@ -1166,10 +1365,10 @@ mod open_payroll {
             assert_eq!(
                 contract
                     .beneficiaries
-                    .get(&accounts.bob)
+                    .get(accounts.bob)
                     .unwrap()
                     .multipliers,
-                vec_to_btreemap(&vec![(0, 200), (1, 50)])
+                vec_to_btreemap(&[(0, 200), (1, 50)])
             );
 
             // check if account was added to the vector
@@ -1223,13 +1422,13 @@ mod open_payroll {
             assert_eq!(
                 contract
                     .beneficiaries
-                    .get(&accounts.bob)
+                    .get(accounts.bob)
                     .unwrap()
                     .multipliers,
-                vec_to_btreemap(&vec![(0, 100), (1, 20)])
+                vec_to_btreemap(&[(0, 100), (1, 20)])
             );
             contract.remove_beneficiary(accounts.bob).unwrap();
-            assert_eq!(contract.beneficiaries.contains(&accounts.bob), false);
+            assert!(!contract.beneficiaries.contains(accounts.bob));
             // check if account was removed from the vector
             assert_eq!(contract.beneficiaries_accounts.len(), 0);
         }
@@ -1356,10 +1555,10 @@ mod open_payroll {
             let (_, mut contract) = create_accounts_and_contract(100_000_000u128);
 
             contract.pause().unwrap();
-            assert_eq!(contract.is_paused(), true);
+            assert!(contract.is_paused());
             advance_n_blocks(1);
             contract.resume().unwrap();
-            assert_eq!(contract.is_paused(), false);
+            assert!(!contract.is_paused());
             // check for the starting block to be the same
             assert_eq!(contract.initial_block, starting_block);
         }
@@ -1586,7 +1785,7 @@ mod open_payroll {
                     .get(accounts.bob)
                     .unwrap()
                     .multipliers,
-                vec_to_btreemap(&vec![(0, 100), (1, 20)])
+                vec_to_btreemap(&[(0, 100), (1, 20)])
             );
             assert_eq!(
                 contract
@@ -1594,7 +1793,7 @@ mod open_payroll {
                     .get(accounts.charlie)
                     .unwrap()
                     .multipliers,
-                vec_to_btreemap(&vec![(0, 100), (1, 3)])
+                vec_to_btreemap(&[(0, 100), (1, 3)])
             );
         }
 
@@ -1657,40 +1856,18 @@ mod open_payroll {
             assert_eq!(next_block_period, 6);
         }
 
-        /// Check the fn get_amount_to_claim
-        #[ink::test]
-        fn check_amount_beneficiaries_when_are_two() {
-            let total_balance = 100_000_000u128;
-            // 2 beneficiaries
-            let (_, contract) = create_accounts_and_contract(total_balance);
-
-            let amount_beneficiaries = contract.get_amount_beneficiaries();
-            assert_eq!(amount_beneficiaries, 2);
-        }
-
-        /// Check the fn get_amount_to_claim
-        #[ink::test]
-        fn check_amount_beneficiaries_when_is_zero() {
-            let total_balance = 100_000_000u128;
-            // no beneficiaries
-            let contract = create_contract_with_no_beneficiaries(total_balance);
-
-            let amount_beneficiaries = contract.get_amount_beneficiaries();
-            assert_eq!(amount_beneficiaries, 0);
-        }
-
         /// check for the fn get_list_payees
         #[ink::test]
-        fn check_list_payees() {
+        fn check_list_beneficiaries() {
             let total_balance = 100_000_000u128;
             let (accounts, contract) = create_accounts_and_contract(total_balance);
 
-            let list_payees = contract.get_list_payees();
-            assert_eq!(list_payees, vec![accounts.bob, accounts.charlie]);
+            let list_beneficiaries = contract.get_list_beneficiaries();
+            assert_eq!(list_beneficiaries, vec![accounts.bob, accounts.charlie]);
 
             let contract = create_contract_with_no_beneficiaries_periodicity(total_balance, 3);
-            let list_payees = contract.get_list_payees();
-            assert_eq!(list_payees, vec![]);
+            let list_beneficiaries = contract.get_list_beneficiaries();
+            assert_eq!(list_beneficiaries, vec![]);
         }
 
         // check for get_amount_to_claim and get_contract_balance
@@ -1850,13 +2027,15 @@ mod open_payroll {
             let max_beneficiaries = 100u8;
 
             for u8_number in 0..max_beneficiaries {
-                let arr_of_32: [u8; 32] = [u8::from(u8_number); 32];
+                let arr_of_32: [u8; 32] = [u8_number; 32];
                 contract
                     .add_beneficiary(AccountId::from(arr_of_32), vec![])
                     .unwrap();
             }
 
-            assert_eq!(contract.get_amount_beneficiaries(), max_beneficiaries);
+            let contract_beneficiaries = contract.beneficiaries_accounts.len() as u8;
+
+            assert_eq!(contract_beneficiaries, max_beneficiaries);
 
             // try to add one more beneficiary
             let res = contract.add_beneficiary(AccountId::from([255u8; 32]), vec![]);
@@ -1871,11 +2050,7 @@ mod open_payroll {
 
             // try to accept ownership
             let accept_ownsership_result = contract.accept_ownership();
-            assert!(matches!(
-                accept_ownsership_result,
-                Err(Error::NotOwner)
-            ));
-
+            assert!(matches!(accept_ownsership_result, Err(Error::NotOwner)));
         }
 
         // Test change ownership
@@ -1884,17 +2059,17 @@ mod open_payroll {
             let (accounts, mut contract) = create_accounts_and_contract(100_000_001u128);
 
             // check no transfered ownership was called yet
-            assert_eq!(contract.transfered_owner, None);
+            assert_eq!(contract.proposed_owner, None);
             // check if owner is alice
             assert_eq!(contract.owner, accounts.alice);
 
             // change owner to bob
             set_sender(accounts.alice);
-            let transfer_ownership_result = contract.transfer_ownership(accounts.bob);
+            let transfer_ownership_result = contract.propose_transfer_ownership(accounts.bob);
             assert!(transfer_ownership_result.is_ok());
 
             // check if owner is bob
-            assert_eq!(contract.transfered_owner, Some(accounts.bob));
+            assert_eq!(contract.proposed_owner, Some(accounts.bob));
 
             // accept ownership
             set_sender(accounts.bob);
@@ -1902,7 +2077,7 @@ mod open_payroll {
             assert!(accept_ownsership_result.is_ok());
 
             assert_eq!(contract.owner, accounts.bob);
-            assert_eq!(contract.transfered_owner, None);
+            assert_eq!(contract.proposed_owner, None);
         }
 
         // Check if dispatch error when adding more beneficiaries allowed from creation
@@ -1913,7 +2088,7 @@ mod open_payroll {
             let max_beneficiaries = 100u8;
             let mut beneficiaries = Vec::new();
             for u8_number in 0..max_beneficiaries + 1 {
-                let arr_of_32: [u8; 32] = [u8::from(u8_number); 32];
+                let arr_of_32: [u8; 32] = [u8_number; 32];
                 let beneficiary = InitialBeneficiary {
                     account_id: AccountId::from(arr_of_32),
                     multipliers: vec![],
