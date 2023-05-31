@@ -1016,8 +1016,8 @@ mod open_payroll {
 
         /// Get a base multiplier based on its id
         #[ink(message)]
-        pub fn get_base_multiplier(&self, multiplier_id: MultiplierId) -> BaseMultiplier {
-            self.base_multipliers.get(multiplier_id).unwrap()
+        pub fn get_base_multiplier(&self, multiplier_id: MultiplierId) -> Option<BaseMultiplier> {
+            self.base_multipliers.get(multiplier_id)
         }
     }
 
