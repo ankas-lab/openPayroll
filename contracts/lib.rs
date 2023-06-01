@@ -1,4 +1,4 @@
-#![cfg_attr(not(feature = "std"), no_std)]
+#![cfg_attr(not(feature = "std"), no_std, no_main)]
 mod errors;
 
 #[ink::contract]
@@ -529,7 +529,7 @@ mod open_payroll {
 
             // Check that the multipliers are valid
             self.check_multipliers_are_valid(multipliers)?;
-            check_no_duplicate_multipliers(&std::vec::Vec::from(multipliers))?;
+            check_no_duplicate_multipliers(&Vec::from(multipliers))?;
 
             Ok(())
         }
