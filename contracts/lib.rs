@@ -989,6 +989,36 @@ mod open_payroll {
 
             total
         }
+
+        /// Get the base amount to claim for each beneficiary
+        #[ink(message)]
+        pub fn get_base_payment(&self) -> Balance {
+            self.base_payment
+        }
+
+        /// Get the periodicity of the payments
+        #[ink(message)]
+        pub fn get_periodicity(&self) -> BlockNumber {
+            self.periodicity
+        }
+
+        /// Get the initial block of the contract
+        #[ink(message)]
+        pub fn get_initial_block(&self) -> BlockNumber {
+            self.initial_block
+        }
+
+        /// Get the base multiplier
+        #[ink(message)]
+        pub fn get_multipliers_list(&self) -> Vec<MultiplierId> {
+            self.multipliers_list.clone()
+        }
+
+        /// Get a base multiplier based on its id
+        #[ink(message)]
+        pub fn get_base_multiplier(&self, multiplier_id: MultiplierId) -> Option<BaseMultiplier> {
+            self.base_multipliers.get(multiplier_id)
+        }
     }
 
     /// ---------------------------------------------------------------
