@@ -702,6 +702,8 @@ mod open_payroll {
         }
 
         /// Check if all payments up to date or storage unclaiumed_payments is up-to-date
+        /// TODO: this function should be renamed and separated in two different functions
+        /// The view function should just return a bool, and the ensure function should return an error
         #[ink(message)]
         pub fn ensure_all_payments_uptodate(&self) -> Result<(), Error> {
             let claimed_period_block = self.get_current_period_initial_block();
@@ -1018,6 +1020,12 @@ mod open_payroll {
         #[ink(message)]
         pub fn get_base_multiplier(&self, multiplier_id: MultiplierId) -> Option<BaseMultiplier> {
             self.base_multipliers.get(multiplier_id)
+        }
+
+        /// Get the owner of the contract
+        #[ink(message)]
+        pub fn get_owner(&self) -> AccountId {
+            self.owner
         }
     }
 
