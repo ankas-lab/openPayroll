@@ -528,7 +528,7 @@ mod open_payroll {
             }
 
             // Ensure that the multipliers are valid
-            self.check_multipliers_are_valid(multipliers)?;
+            self.ensure_multipliers_are_valid(multipliers)?;
             ensure_no_duplicate_multipliers(&Vec::from(multipliers))?;
 
             Ok(())
@@ -542,7 +542,7 @@ mod open_payroll {
             multipliers: Vec<(MultiplierId, Multiplier)>,
         ) -> Result<(), Error> {
             // Calls the function to do the checking
-            self.check_beneficiary_to_add(account_id, &multipliers)?;
+            self.ensure_beneficiary_to_add(account_id, &multipliers)?;
 
             let multipliers_vec = multipliers.clone();
             let multipliers = vec_to_btreemap(&multipliers);
@@ -585,7 +585,7 @@ mod open_payroll {
             }
 
             // Check that the multipliers are valid
-            self.check_multipliers_are_valid(&multipliers)?;
+            self.ensure_multipliers_are_valid(&multipliers)?;
             ensure_no_duplicate_multipliers(&multipliers)?;
 
             let multipliers_vec = multipliers.clone();
