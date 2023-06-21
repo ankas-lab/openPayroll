@@ -252,12 +252,12 @@ mod open_payroll {
                 return Err(Error::InvalidParams);
             }
 
-            // Check for duplicate beneficiaries
-            check_no_duplicate_beneficiaries(
+            // Ensure for duplicate beneficiaries
+            ensure_no_duplicate_beneficiaries(
                 &initial_beneficiaries.iter().map(|b| b.account_id).collect(),
             )?;
 
-            // Check beneficiaries and multipliers limits
+            // Ensure beneficiaries and multipliers limits
             if initial_beneficiaries.len() > MAX_BENEFICIARIES {
                 return Err(Error::MaxBeneficiariesExceeded);
             }
@@ -286,8 +286,8 @@ mod open_payroll {
                     return Err(Error::InvalidMultipliersLength);
                 }
 
-                // Check for duplicate multipliers
-                check_no_duplicate_multipliers(&beneficiary_data.multipliers)?;
+                // Ensure for duplicate multipliers
+                ensure_no_duplicate_multipliers(&beneficiary_data.multipliers)?;
 
                 let multipliers = vec_to_btreemap(&beneficiary_data.multipliers);
 
@@ -355,7 +355,7 @@ mod open_payroll {
                     || multiplier_block_validity.unwrap() > current_block
             });
 
-            // gets the total amount that the beneficiary can claim and check the amount is not bigger than that
+            // gets the total amount that the beneficiary can claim and ensure the amount is not bigger than that
             let total_payment = self._get_amount_to_claim(account_id, true);
             if amount > total_payment {
                 return Err(Error::ClaimedAmountIsBiggerThanAvailable);
@@ -443,17 +443,17 @@ mod open_payroll {
                 .get(multiplier_id)
                 .ok_or(Error::MultiplierNotFound)?;
 
-            // Check if the multiplier is already deactivated
+            // Ensure if the multiplier is already deactivated
             if multiplier.valid_until_block.is_none() {
                 return Err(Error::MultiplierNotDeactivated);
             }
 
-            // Check if the multiplier is expired
+            // Ensure if the multiplier is expired
             if current_block > multiplier.valid_until_block.unwrap() {
                 return Err(Error::MultiplierNotExpired);
             }
 
-            // Check if all beneficiaries have claimed the payment
+            // Ensure if all beneficiaries have claimed the payment
             self.ensure_all_claimed_in_period()?;
 
             // Remove multiplier from multipliers_list
@@ -495,8 +495,8 @@ mod open_payroll {
             Ok(())
         }
 
-        // Check multipliers are valid
-        fn check_multipliers_are_valid(
+        // Ensure multipliers are valid
+        fn ensure_multipliers_are_valid(
             &self,
             multipliers: &[(MultiplierId, Multiplier)],
         ) -> Result<(), Error> {
@@ -554,27 +554,27 @@ mod open_payroll {
             }
         }
 
-        // Function for doing the checking before adding a new beneficiary
-        fn check_beneficiary_to_add(
+        // Function for doing the ensurance before adding a new beneficiary
+        fn ensure_beneficiary_to_add(
             &self,
             account_id: AccountId,
             multipliers: &[(MultiplierId, Multiplier)],
         ) -> Result<(), Error> {
             self.ensure_owner()?;
 
-            // Check that the beneficiary does not exist
+            // Ensure that the beneficiary does not exist
             if self.beneficiaries.contains(account_id) {
                 return Err(Error::AccountAlreadyExists);
             }
 
-            // Check that the number of beneficiaries does not exceed the maximum
+            // Ensure that the number of beneficiaries does not exceed the maximum
             if self.beneficiaries_accounts.len() + 1 > MAX_BENEFICIARIES {
                 return Err(Error::MaxBeneficiariesExceeded);
             }
 
-            // Check that the multipliers are valid
-            self.check_multipliers_are_valid(multipliers)?;
-            check_no_duplicate_multipliers(&Vec::from(multipliers))?;
+            // Ensure that the multipliers are valid
+            self.ensure_multipliers_are_valid(multipliers)?;
+            ensure_no_duplicate_multipliers(&Vec::from(multipliers))?;
 
             Ok(())
         }
@@ -587,7 +587,7 @@ mod open_payroll {
             multipliers: Vec<(MultiplierId, Multiplier)>,
         ) -> Result<(), Error> {
             // Calls the function to do the checking
-            self.check_beneficiary_to_add(account_id, &multipliers)?;
+            self.ensure_beneficiary_to_add(account_id, &multipliers)?;
 
             let multipliers_vec = multipliers.clone();
             let multipliers = vec_to_btreemap(&multipliers);
@@ -624,14 +624,14 @@ mod open_payroll {
         ) -> Result<(), Error> {
             self.ensure_owner()?;
 
-            // Check that the beneficiary exists
+            // Ensure that the beneficiary exists
             if !self.beneficiaries.contains(account_id) {
                 return Err(Error::AccountNotFound);
             }
 
             // Check that the multipliers are valid
-            self.check_multipliers_are_valid(&multipliers)?;
-            check_no_duplicate_multipliers(&multipliers)?;
+            self.ensure_multipliers_are_valid(&multipliers)?;
+            ensure_no_duplicate_multipliers(&multipliers)?;
 
             let multipliers_vec = multipliers.clone();
             let multipliers = vec_to_btreemap(&multipliers);
@@ -686,7 +686,7 @@ mod open_payroll {
                 return Err(Error::InvalidParams);
             }
 
-            //check if all payments are up to date
+            // Ensure if all payments are up to date
             self.ensure_all_claimed_in_period()?;
             self.base_payment = base_payment;
 
@@ -699,7 +699,7 @@ mod open_payroll {
         pub fn add_base_multiplier(&mut self, name: String) -> Result<(), Error> {
             self.ensure_owner()?;
 
-            // Check that the number of multipliers does not exceed the maximum
+            // Ensure that the number of multipliers does not exceed the maximum
             if self.multipliers_list.len() + 1 > MAX_MULTIPLIERS {
                 return Err(Error::MaxMultipliersExceeded);
             }
@@ -735,8 +735,8 @@ mod open_payroll {
                 return Err(Error::InvalidParams);
             }
 
-            //check if all payments are up to date
-            //self.ensure_all_payments_uptodate()?;
+            // Ensure if all payments are up to date
+            // self.ensure_all_payments_uptodate()?;
             self.ensure_all_claimed_in_period()?;
             self.periodicity = periodicity;
 
@@ -746,7 +746,7 @@ mod open_payroll {
             Ok(())
         }
 
-        /// Check if all payments up to date or storage unclaiumed_payments is up-to-date
+        /// Ensure if all payments up to date or storage unclaiumed_payments is up-to-date
         /// TODO: this function should be renamed and separated in two different functions
         /// The view function should just return a bool, and the ensure function should return an error
         #[ink(message)]
@@ -864,7 +864,7 @@ mod open_payroll {
             }
         }
 
-        /// check if all beneficiaries claimed in period
+        /// Ensure if all beneficiaries claimed in period
         fn ensure_all_claimed_in_period(&mut self) -> Result<(), Error> {
             let claiming_period_block = self.get_current_period_initial_block();
 
@@ -1087,9 +1087,9 @@ mod open_payroll {
         btree_map
     }
 
-    /// Given a list of beneficiaries it checks there are no duplicates
+    /// Given a list of beneficiaries it ensures there are no duplicates
     #[allow(clippy::all)]
-    fn check_no_duplicate_beneficiaries(beneficiaries: &Vec<AccountId>) -> Result<(), Error> {
+    fn ensure_no_duplicate_beneficiaries(beneficiaries: &Vec<AccountId>) -> Result<(), Error> {
         let mut sorted_beneficiaries = beneficiaries.clone();
         sorted_beneficiaries.sort_by_key(|&beneficiary| beneficiary);
 
@@ -1102,9 +1102,9 @@ mod open_payroll {
         Ok(())
     }
 
-    /// Given a list of multipliers it checks there are no duplicates
+    /// Given a list of multipliers it ensures there are no duplicates
     #[allow(clippy::all)]
-    fn check_no_duplicate_multipliers(
+    fn ensure_no_duplicate_multipliers(
         multipliers: &Vec<(MultiplierId, Multiplier)>,
     ) -> Result<(), Error> {
         let mut sorted_multipliers = multipliers.clone();
