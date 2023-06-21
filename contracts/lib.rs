@@ -1,9 +1,7 @@
 #![cfg_attr(not(feature = "std"), no_std, no_main)]
-mod errors;
 
 #[ink::contract]
 mod open_payroll {
-    use crate::errors::Error;
     use ink::prelude::collections::BTreeMap;
     use ink::prelude::string::String;
     use ink::prelude::vec::Vec;
@@ -16,6 +14,53 @@ mod open_payroll {
     // Establish the maximum number of beneficiaries and multipliers that can be added to the contract
     const MAX_BENEFICIARIES: usize = 100;
     const MAX_MULTIPLIERS: usize = 10;
+
+    #[derive(scale::Encode, scale::Decode, Eq, PartialEq, Debug, Clone)]
+    #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
+    pub enum Error {
+        // The caller is not the owner of the contract
+        NotOwner,
+        // The contract is paused
+        ContractIsPaused,
+        // The params are invalid
+        InvalidParams,
+        // The account is not found
+        AccountNotFound,
+        // The contract does not have enough balance to pay
+        NotEnoughBalanceInTreasury,
+        // The transfer failed
+        TransferFailed,
+        // The beneficiary has no unclaimed payments
+        NoUnclaimedPayments,
+        // Some of the beneficiaries have unclaimed payments
+        PaymentsNotUpToDate,
+        // Not all the payments are claimed in the last period
+        NotAllClaimedInPeriod,
+        // The amount to claim is bigger than the available amount
+        ClaimedAmountIsBiggerThanAvailable,
+        // The amount of multipliers per Beneficiary is not equal to the amount of periods
+        InvalidMultipliersLength,
+        // The multiplier id does not exist
+        MultiplierNotFound,
+        // The multiplier is already deactivated
+        MultiplierAlreadyDeactivated,
+        // The multiplier is not deactivated
+        MultiplierNotDeactivated,
+        // There are duplicated multipliers
+        DuplicatedMultipliers,
+        // There are duplicated beneficiaries
+        DuplicatedBeneficiaries,
+        // The multiplier is not expired yet
+        MultiplierNotExpired,
+        // The maximum number of beneficiaries is exceeded
+        MaxBeneficiariesExceeded,
+        // The maximum number of multipliers is exceeded
+        MaxMultipliersExceeded,
+        // The beneficiary already exists
+        AccountAlreadyExists,
+        // Overflow the operation
+        Overflow,
+    }
 
     /// Emitted when a beneficiary claims their payment
     #[ink(event)]
@@ -702,6 +747,8 @@ mod open_payroll {
         }
 
         /// Ensure if all payments up to date or storage unclaiumed_payments is up-to-date
+        /// TODO: this function should be renamed and separated in two different functions
+        /// The view function should just return a bool, and the ensure function should return an error
         #[ink(message)]
         pub fn ensure_all_payments_uptodate(&self) -> Result<(), Error> {
             let claimed_period_block = self.get_current_period_initial_block();
@@ -1018,6 +1065,12 @@ mod open_payroll {
         #[ink(message)]
         pub fn get_base_multiplier(&self, multiplier_id: MultiplierId) -> Option<BaseMultiplier> {
             self.base_multipliers.get(multiplier_id)
+        }
+
+        /// Get the owner of the contract
+        #[ink(message)]
+        pub fn get_owner(&self) -> AccountId {
+            self.owner
         }
     }
 
