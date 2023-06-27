@@ -233,6 +233,31 @@ mod open_payroll {
 
     /// implementation of the OpenPayroll contract
     impl OpenPayroll {
+        pub fn default(periodicity: u32, base_payment: Balance) -> Self {
+            // Defines the claims in period
+            let claims_in_period = ClaimsInPeriod {
+                period: 0,
+                total_claims: 0,
+            };
+            let base_multipliers = Mapping::new();
+            let initial_block = Self::env().block_number();
+            let owner = Self::env().caller();
+
+            Self {
+                owner,
+                proposed_owner: None,
+                beneficiaries: Default::default(),
+                beneficiaries_accounts: Default::default(),
+                periodicity,
+                base_payment,
+                initial_block,
+                paused_block_at: None,
+                next_multiplier_id: 0,
+                base_multipliers,
+                multipliers_list: Default::default(),
+                claims_in_period,
+            }
+        }
         /// Constructor that initializes the owner, the base payment, the periodicity, the initial block, the base multipliers,
         /// and the initial beneficiaries
         #[ink(constructor, payable)]
@@ -242,10 +267,7 @@ mod open_payroll {
             initial_base_multipliers: Vec<String>,
             initial_beneficiaries: Vec<InitialBeneficiary>,
         ) -> Result<Self, Error> {
-            let initial_block_number = Self::env().block_number();
-            let proposed_owner = None;
-            let owner = Self::env().caller();
-            let mut next_multiplier_id = 0;
+            let mut instance = Self::default(periodicity, base_payment);
 
             // 0 payment or 0 periodicity make no sense
             if base_payment == 0 || periodicity == 0 {
@@ -265,24 +287,20 @@ mod open_payroll {
                 return Err(Error::MaxMultipliersExceeded);
             }
 
-            let mut beneficiaries = Mapping::default();
-            let mut accounts = Vec::new();
-            let mut base_multipliers = Mapping::default();
-            let mut multipliers_list = Vec::new();
+            instance._create_base_multipliers(initial_base_multipliers);
 
-            // Create the base multipliers
-            for base_multiplier in initial_base_multipliers.iter() {
-                base_multipliers.insert(
-                    next_multiplier_id,
-                    &BaseMultiplier::new(base_multiplier.clone()),
-                );
-                multipliers_list.push(next_multiplier_id);
-                next_multiplier_id += 1;
-            }
+            instance._create_initial_beneficiaries(initial_beneficiaries)?;
 
+            Ok(instance)
+        }
+
+        fn _create_initial_beneficiaries(
+            &mut self,
+            initial_beneficiaries: Vec<InitialBeneficiary>,
+        ) -> Result<(), Error> {
             // Create the initial beneficiaries
             for beneficiary_data in initial_beneficiaries.iter() {
-                if beneficiary_data.multipliers.len() != multipliers_list.len() {
+                if beneficiary_data.multipliers.len() != self.multipliers_list.len() {
                     return Err(Error::InvalidMultipliersLength);
                 }
 
@@ -295,33 +313,28 @@ mod open_payroll {
                     account_id: beneficiary_data.account_id,
                     multipliers,
                     unclaimed_payments: 0,
-                    last_updated_period_block: initial_block_number,
+                    last_updated_period_block: self.initial_block,
                 };
 
-                beneficiaries.insert(beneficiary_data.account_id, &beneficiary);
-                accounts.push(beneficiary_data.account_id);
+                self.beneficiaries
+                    .insert(beneficiary_data.account_id, &beneficiary);
+                self.beneficiaries_accounts
+                    .push(beneficiary_data.account_id);
             }
 
-            // Defines the claims in period
-            let claims_in_period = ClaimsInPeriod {
-                period: 0,
-                total_claims: 0,
-            };
+            Ok(())
+        }
 
-            Ok(Self {
-                proposed_owner,
-                owner,
-                beneficiaries,
-                periodicity,
-                base_payment,
-                initial_block: initial_block_number,
-                paused_block_at: None,
-                beneficiaries_accounts: accounts,
-                next_multiplier_id,
-                base_multipliers,
-                multipliers_list,
-                claims_in_period,
-            })
+        fn _create_base_multipliers(&mut self, initial_base_multipliers: Vec<String>) {
+            // Create the base multipliers
+            for base_multiplier in initial_base_multipliers.iter() {
+                self.base_multipliers.insert(
+                    self.next_multiplier_id,
+                    &BaseMultiplier::new(base_multiplier.clone()),
+                );
+                self.multipliers_list.push(self.next_multiplier_id);
+                self.next_multiplier_id += 1;
+            }
         }
 
         /// Claim payment for a single account id
