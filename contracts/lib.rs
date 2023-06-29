@@ -863,6 +863,22 @@ mod open_payroll {
             Ok(result)
         }
 
+        /// Get amount in storage without transferring the funds
+        /// Read Only function
+        #[ink(message)]
+        pub fn get_amount_to_claim_for_one_period(
+            &self,
+            account_id: AccountId,
+        ) -> Result<Balance, Error> {
+            if !self.beneficiaries.contains(account_id) {
+                return Err(Error::AccountNotFound);
+            }
+
+            let result = self._get_amount_to_claim(account_id, false);
+
+            Ok(result)
+        }
+
         /// Updates the number of claims in a period
         /// If the period is the same, it increments the number of claims
         /// Otherwise, it resets the number of claims and set it to 1
