@@ -240,7 +240,7 @@ mod open_payroll {
             periodicity: u32,
             base_payment: Balance,
             initial_base_multipliers: Vec<String>,
-            initial_beneficiaries: Vec<InitialBeneficiary>,
+            initial_beneficiaries: Vec<InitialBeneficiary>, //Delete the MultiplierId from the struct inside
         ) -> Result<Self, Error> {
             let initial_block_number = Self::env().block_number();
             let proposed_owner = None;
@@ -270,6 +270,7 @@ mod open_payroll {
             let mut base_multipliers = Mapping::default();
             let mut multipliers_list = Vec::new();
 
+            //TODO: improve this for by using i as id and just set next multiplier id to initial_base_multipliers.len()
             // Create the base multipliers
             for base_multiplier in initial_base_multipliers.iter() {
                 base_multipliers.insert(
@@ -289,6 +290,7 @@ mod open_payroll {
                 // Ensure for duplicate multipliers
                 ensure_no_duplicate_multipliers(&beneficiary_data.multipliers)?;
 
+                //TODO update vec_to_btreemap to only receive a Vec<Multiplier>
                 let multipliers = vec_to_btreemap(&beneficiary_data.multipliers);
 
                 let beneficiary = Beneficiary {
