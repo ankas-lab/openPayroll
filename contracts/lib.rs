@@ -523,7 +523,7 @@ mod open_payroll {
             }
 
             // Ensure if the multiplier is expired
-            if current_block > multiplier.valid_until_block.unwrap() {
+            if current_block <= multiplier.valid_until_block.unwrap() {
                 return Err(Error::MultiplierNotExpired);
             }
 
