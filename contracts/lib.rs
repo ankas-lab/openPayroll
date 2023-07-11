@@ -195,14 +195,14 @@ mod open_payroll {
 
     /// OpenPayroll contract structure containing the owner, the beneficiaries, the multipliers, the base payment, the periodicity,
     /// the initial block, the last updated block, the claims in period, the paused state, and the base multipliers
-    // The presence of redundant information between the 'AccountsIds' in 'beneficiaries' and 'beneficiaries_accounts' is intentional.
-    // Although they represent the same account, this redundancy is maintained in order to support efficient iteration over
-    // 'beneficiaries_accounts' while fetching a beneficiary. By duplicating the account IDs, we achieve a constant time complexity of
-    // O(1) when accessing beneficiary information directly from 'beneficiaries_accounts'.
-    // Similarly, the redundancy in iterating over both 'MultiplierIds' in 'multipliers_list' and 'BaseMultipliers' is intentional for
-    // improved access to the 'BaseMultiplier' field. Although 'MultiplierIds' could directly link to the corresponding 'BaseMultiplier',
-    // maintaining both lists allows for efficient iteration over 'multipliers_list' while accessing the 'BaseMultiplier' values.
-    // This design choice enables streamlined retrieval of relevant multiplier information without compromising performance.
+    /// The presence of redundant information between the 'AccountsIds' in 'beneficiaries' and 'beneficiaries_accounts' is intentional.
+    /// Although they represent the same account, this redundancy is maintained in order to support efficient iteration over
+    /// 'beneficiaries_accounts' while fetching a beneficiary. By duplicating the account IDs, we achieve a constant time complexity of
+    /// O(1) when accessing beneficiary information directly from 'beneficiaries_accounts'.
+    /// Similarly, the redundancy in iterating over both 'MultiplierIds' in 'multipliers_list' and 'BaseMultipliers' is intentional for
+    /// improved access to the 'BaseMultiplier' field. Although 'MultiplierIds' could directly link to the corresponding 'BaseMultiplier',
+    /// maintaining both lists allows for efficient iteration over 'multipliers_list' while accessing the 'BaseMultiplier' values.
+    /// This design choice enables streamlined retrieval of relevant multiplier information without compromising performance.
     #[ink(storage)]
     pub struct OpenPayroll {
         /// The account to be transfered to, until the new owner accept it
@@ -793,8 +793,8 @@ mod open_payroll {
             }
         }
 
-        /// check the amount to claim for one beneficiary in any period
-        /// without unclaimed payments
+        // check the amount to claim for one beneficiary in any period
+        // without unclaimed payments
         fn _get_amount_to_claim_for_one_period(
             &self,
             beneficiary: &Beneficiary,
