@@ -11,6 +11,7 @@ mod open_payroll {
     // Define the types that will be used in the contract
     type Multiplier = u128;
     type MultiplierId = u32;
+
     // Establish the maximum number of beneficiaries and multipliers that can be added to the contract
     const MAX_BENEFICIARIES: usize = 100;
     const MAX_MULTIPLIERS: usize = 10;
@@ -38,7 +39,7 @@ mod open_payroll {
         NotAllClaimedInPeriod,
         /// The amount to claim is bigger than the available amount
         ClaimedAmountIsBiggerThanAvailable,
-        /// The amount of multipliers per Beneficiary is not equal to the amount of periods
+        /// The amount of multipliers per Beneficiary is not equal to the amount of base multipliers
         InvalidMultipliersLength,
         /// The multiplier id does not exist
         MultiplierNotFound,
@@ -58,8 +59,8 @@ mod open_payroll {
         MaxMultipliersExceeded,
         /// The beneficiary already exists
         AccountAlreadyExists,
-        /// Overflow the operation
-        Overflow,
+        /// The multiplier ID overflowed
+        MultiplierIdOverflow,
     }
 
     /// Emitted when a beneficiary claims their payment
@@ -714,7 +715,7 @@ mod open_payroll {
             // Increment the next_multiplier_id checking for overflow
             self.next_multiplier_id = match self.next_multiplier_id.checked_add(1) {
                 Some(val) => val,
-                None => return Err(Error::Overflow),
+                None => return Err(Error::MultiplierIdOverflow),
             };
 
             // Emit the BaseMultiplierAdded event
