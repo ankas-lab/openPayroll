@@ -18,47 +18,47 @@ mod open_payroll {
     #[derive(scale::Encode, scale::Decode, Eq, PartialEq, Debug, Clone)]
     #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
     pub enum Error {
-        // The caller is not the owner of the contract
+        /// The caller is not the owner of the contract
         NotOwner,
-        // The contract is paused
+        /// The contract is paused
         ContractIsPaused,
-        // The params are invalid
+        /// The params are invalid
         InvalidParams,
-        // The account is not found
+        /// The account is not found
         AccountNotFound,
-        // The contract does not have enough balance to pay
+        /// The contract does not have enough balance to pay
         NotEnoughBalanceInTreasury,
-        // The transfer failed
+        /// The transfer failed
         TransferFailed,
-        // The beneficiary has no unclaimed payments
+        /// The beneficiary has no unclaimed payments
         NoUnclaimedPayments,
-        // Some of the beneficiaries have unclaimed payments
+        /// Some of the beneficiaries have unclaimed payments
         PaymentsNotUpToDate,
-        // Not all the payments are claimed in the last period
+        /// Not all the payments are claimed in the last period
         NotAllClaimedInPeriod,
-        // The amount to claim is bigger than the available amount
+        /// The amount to claim is bigger than the available amount
         ClaimedAmountIsBiggerThanAvailable,
-        // The amount of multipliers per Beneficiary is not equal to the amount of periods
+        /// The amount of multipliers per Beneficiary is not equal to the amount of periods
         InvalidMultipliersLength,
-        // The multiplier id does not exist
+        /// The multiplier id does not exist
         MultiplierNotFound,
-        // The multiplier is already deactivated
+        /// The multiplier is already deactivated
         MultiplierAlreadyDeactivated,
-        // The multiplier is not deactivated
+        /// The multiplier is not deactivated
         MultiplierNotDeactivated,
-        // There are duplicated multipliers
+        /// There are duplicated multipliers
         DuplicatedMultipliers,
-        // There are duplicated beneficiaries
+        /// There are duplicated beneficiaries
         DuplicatedBeneficiaries,
-        // The multiplier is not expired yet
+        /// The multiplier is not expired yet
         MultiplierNotExpired,
-        // The maximum number of beneficiaries is exceeded
+        /// The maximum number of beneficiaries is exceeded
         MaxBeneficiariesExceeded,
-        // The maximum number of multipliers is exceeded
+        /// The maximum number of multipliers is exceeded
         MaxMultipliersExceeded,
-        // The beneficiary already exists
+        /// The beneficiary already exists
         AccountAlreadyExists,
-        // Overflow the operation
+        /// Overflow the operation
         Overflow,
     }
 
@@ -325,8 +325,8 @@ mod open_payroll {
         }
 
         /// Claim payment for a single account id
-        // If the amount is 0 no money is transferred. However, the "unclaimed_payments" field is set to the total
-        // value that the beneficiary has yet to claim.
+        /// If the amount is 0 no money is transferred. However, the "unclaimed_payments" field is set to the total
+        /// value that the beneficiary has yet to claim.
         #[ink(message)]
         pub fn claim_payment(
             &mut self,
@@ -765,7 +765,7 @@ mod open_payroll {
             Ok(())
         }
 
-        /// Get the amount of tokens that can be claimed by a beneficiary with specific block_numer
+        // Get the amount of tokens that can be claimed by a beneficiary with specific block_numer
         fn _get_amount_to_claim_in_block(
             &self,
             account_id: AccountId,
@@ -825,8 +825,8 @@ mod open_payroll {
             final_multiplier * self.base_payment / 100
         }
 
-        /// internal function to get the amount to claim
-        /// filtered multipliers in true means that all multipliers are active
+        // internal function to get the amount to claim
+        // filtered multipliers in true means that all multipliers are active
         fn _get_amount_to_claim(
             &self,
             account_id: AccountId,
@@ -850,9 +850,9 @@ mod open_payroll {
             Ok(result)
         }
 
-        /// Updates the number of claims in a period
-        /// If the period is the same, it increments the number of claims
-        /// Otherwise, it resets the number of claims and set it to 1
+        // Updates the number of claims in a period
+        // If the period is the same, it increments the number of claims
+        // Otherwise, it resets the number of claims and set it to 1
         fn _update_claims_in_period(&mut self, claiming_period_block: BlockNumber) {
             if claiming_period_block == self.claims_in_period.period {
                 // Updates current claims in period
@@ -864,7 +864,7 @@ mod open_payroll {
             }
         }
 
-        /// Ensure if all beneficiaries claimed in period
+        // Ensure if all beneficiaries claimed in period
         fn ensure_all_claimed_in_period(&mut self) -> Result<(), Error> {
             let claiming_period_block = self.get_current_period_initial_block();
 
@@ -920,11 +920,11 @@ mod open_payroll {
 
         /// Get current block period
         /// Read Only function
-        // The calculation current_block - ((current_block - self.initial_block) % self.periodicity) might be a bit tricky to understand at first glance.
-        // Let's use an example to understand it. Assume self.initial_block to be 10, self.periodicity to be 20, and the current_block to be 65.
-        // current_block - self.initial_block = 65 - 10 = 55 55 % self.periodicity = 55 % 20 = 15.
-        // This gives us the number of blocks past the last "period start" in relation to initial_block and periodicity.  current_block - 15 = 65 - 15 = 50.
-        // This is the block number where the current period started.
+        /// The calculation current_block - ((current_block - self.initial_block) % self.periodicity) might be a bit tricky to understand at first glance.
+        /// Let's use an example to understand it. Assume self.initial_block to be 10, self.periodicity to be 20, and the current_block to be 65.
+        /// current_block - self.initial_block = 65 - 10 = 55 55 % self.periodicity = 55 % 20 = 15.
+        /// This gives us the number of blocks past the last "period start" in relation to initial_block and periodicity.  current_block - 15 = 65 - 15 = 50.
+        /// This is the block number where the current period started.
         #[ink(message)]
         pub fn get_current_period_initial_block(&self) -> BlockNumber {
             let current_block = self.env().block_number();
