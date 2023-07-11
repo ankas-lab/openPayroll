@@ -240,7 +240,7 @@ mod open_payroll {
             periodicity: u32,
             base_payment: Balance,
             initial_base_multipliers: Vec<String>,
-            initial_beneficiaries: Vec<InitialBeneficiary>, //Delete the MultiplierId from the struct inside
+            //initial_beneficiaries: Vec<InitialBeneficiary>, //Delete the MultiplierId from the struct inside
         ) -> Result<Self, Error> {
             let initial_block_number = Self::env().block_number();
             let proposed_owner = None;
@@ -253,14 +253,14 @@ mod open_payroll {
             }
 
             // Ensure for duplicate beneficiaries
-            ensure_no_duplicate_beneficiaries(
-                &initial_beneficiaries.iter().map(|b| b.account_id).collect(),
-            )?;
+            // ensure_no_duplicate_beneficiaries(
+            //     &initial_beneficiaries.iter().map(|b| b.account_id).collect(),
+            // )?;
 
-            // Ensure beneficiaries and multipliers limits
-            if initial_beneficiaries.len() > MAX_BENEFICIARIES {
-                return Err(Error::MaxBeneficiariesExceeded);
-            }
+            // // Ensure beneficiaries and multipliers limits
+            // if initial_beneficiaries.len() > MAX_BENEFICIARIES {
+            //     return Err(Error::MaxBeneficiariesExceeded);
+            // }
             if initial_base_multipliers.len() > MAX_MULTIPLIERS {
                 return Err(Error::MaxMultipliersExceeded);
             }
@@ -282,27 +282,27 @@ mod open_payroll {
             }
 
             // Create the initial beneficiaries
-            for beneficiary_data in initial_beneficiaries.iter() {
-                if beneficiary_data.multipliers.len() != multipliers_list.len() {
-                    return Err(Error::InvalidMultipliersLength);
-                }
+            // for beneficiary_data in initial_beneficiaries.iter() {
+            //     if beneficiary_data.multipliers.len() != multipliers_list.len() {
+            //         return Err(Error::InvalidMultipliersLength);
+            //     }
 
-                // Ensure for duplicate multipliers
-                ensure_no_duplicate_multipliers(&beneficiary_data.multipliers)?;
+            //     // Ensure for duplicate multipliers
+            //     ensure_no_duplicate_multipliers(&beneficiary_data.multipliers)?;
 
-                //TODO update vec_to_btreemap to only receive a Vec<Multiplier>
-                let multipliers = vec_to_btreemap(&beneficiary_data.multipliers);
+            //     //TODO update vec_to_btreemap to only receive a Vec<Multiplier>
+            //     let multipliers = vec_to_btreemap(&beneficiary_data.multipliers);
 
-                let beneficiary = Beneficiary {
-                    account_id: beneficiary_data.account_id,
-                    multipliers,
-                    unclaimed_payments: 0,
-                    last_updated_period_block: initial_block_number,
-                };
+            //     let beneficiary = Beneficiary {
+            //         account_id: beneficiary_data.account_id,
+            //         multipliers,
+            //         unclaimed_payments: 0,
+            //         last_updated_period_block: initial_block_number,
+            //     };
 
-                beneficiaries.insert(beneficiary_data.account_id, &beneficiary);
-                accounts.push(beneficiary_data.account_id);
-            }
+            //     beneficiaries.insert(beneficiary_data.account_id, &beneficiary);
+            //     accounts.push(beneficiary_data.account_id);
+            // }
 
             // Defines the claims in period
             let claims_in_period = ClaimsInPeriod {
@@ -1158,7 +1158,7 @@ mod open_payroll {
                 2,
                 1000,
                 vec!["Seniority".to_string(), "Performance".to_string()],
-                vec![beneficiary_bob, beneficiary_charlie],
+                //vec![beneficiary_bob, beneficiary_charlie],
             )
             .expect("Cannot create contract")
         }
@@ -1169,7 +1169,7 @@ mod open_payroll {
                 2,
                 1000,
                 vec!["Seniority".to_string(), "Performance".to_string()],
-                vec![],
+                //vec![],
             )
             .expect("Cannot create contract")
         }
@@ -1183,7 +1183,7 @@ mod open_payroll {
                 periodicity,
                 1000,
                 vec!["Seniority".to_string(), "Performance".to_string()],
-                vec![],
+                //vec![],
             )
             .expect("Cannot create contract")
         }
@@ -1265,7 +1265,7 @@ mod open_payroll {
                 2,
                 1000,
                 vec!["Seniority".to_string(), "Performance".to_string()],
-                vec![beneficiary_bob, beneficiary_charlie],
+                //vec![beneficiary_bob, beneficiary_charlie],
             );
             assert!(matches!(res, Ok(_)));
             let contract = res.unwrap();
@@ -1345,7 +1345,7 @@ mod open_payroll {
                 2,
                 1000,
                 vec!["Seniority".to_string(), "Performance".to_string()],
-                vec![beneficiary_bob, beneficiary_charlie],
+                //vec![beneficiary_bob, beneficiary_charlie],
             );
 
             assert!(matches!(res, Err(Error::InvalidMultipliersLength)));
@@ -1362,7 +1362,7 @@ mod open_payroll {
                 2,
                 1000,
                 vec!["Seniority".to_string(), "Performance".to_string()],
-                vec![beneficiary_bob, beneficiary_charlie],
+                //vec![beneficiary_bob, beneficiary_charlie],
             );
 
             assert!(matches!(res, Err(Error::InvalidMultipliersLength)));
@@ -1379,7 +1379,7 @@ mod open_payroll {
                 2,
                 1000,
                 vec!["Seniority".to_string(), "Performance".to_string()],
-                vec![beneficiary_bob, beneficiary_charlie],
+                //vec![beneficiary_bob, beneficiary_charlie],
             );
 
             assert!(matches!(res, Err(Error::InvalidMultipliersLength)));
@@ -1400,7 +1400,7 @@ mod open_payroll {
                     "Performance".to_string(),
                     "Years_at_company".to_string(),
                 ],
-                vec![beneficiary_bob, beneficiary_charlie],
+                //vec![beneficiary_bob, beneficiary_charlie],
             );
 
             assert!(matches!(res, Err(Error::InvalidMultipliersLength)));
@@ -1421,7 +1421,7 @@ mod open_payroll {
                 2,
                 1000,
                 vec!["Seniority".to_string(), "Performance".to_string()],
-                vec![beneficiary_1, beneficiary_2],
+                //vec![beneficiary_1, beneficiary_2],
             );
 
             assert!(matches!(res, Err(Error::DuplicatedBeneficiaries)));
@@ -2185,7 +2185,7 @@ mod open_payroll {
                 2,
                 1000,
                 vec!["Seniority".to_string(), "Performance".to_string()],
-                beneficiaries,
+                //beneficiaries,
             );
 
             assert!(matches!(res, Err(Error::MaxBeneficiariesExceeded)));
@@ -2207,7 +2207,11 @@ mod open_payroll {
                 multipliers: vec![],
             };
 
-            let res = OpenPayroll::new(2, 1000, multipliers, vec![beneficiary]);
+            let res = OpenPayroll::new(
+                2,
+                1000,
+                multipliers, // vec![beneficiary]
+            );
 
             assert!(matches!(res, Err(Error::MaxMultipliersExceeded)));
         }
