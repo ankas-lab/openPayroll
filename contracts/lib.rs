@@ -270,13 +270,6 @@ mod open_payroll {
             }
         }
 
-        #[ink(constructor, payable)]
-        pub fn new_inactive() -> Result<Self, Error> {
-            let instance = Self::default();
-
-            Ok(instance)
-        }
-
         /// Constructor that initializes the owner, the base payment, the periodicity, the initial block, the base multipliers,
         /// and the initial beneficiaries
         #[ink(constructor, payable)]
@@ -315,6 +308,51 @@ mod open_payroll {
             instance._create_initial_beneficiaries(initial_beneficiaries)?;
 
             Ok(instance)
+        }
+
+        #[ink(constructor)]
+        pub fn new_inactive() -> Result<Self, Error> {
+            let instance = Self::default();
+
+            Ok(instance)
+        }
+
+        #[ink(message, payable)]
+        pub fn initialize(
+            &mut self,
+            periodicity: u32,
+            base_payment: Balance,
+            initial_base_multipliers: Vec<String>,
+            initial_beneficiaries: Vec<InitialBeneficiary>,
+        ) -> Result<(), Error> {
+            // 0 payment or 0 periodicity make no sense
+            if base_payment == 0 || periodicity == 0 {
+                return Err(Error::InvalidParams);
+            }
+
+            self.periodicity = periodicity;
+            self.base_payment = base_payment;
+
+            // Ensure for duplicate beneficiaries
+            ensure_no_duplicate_beneficiaries(
+                &initial_beneficiaries.iter().map(|b| b.account_id).collect(),
+            )?;
+
+            // Ensure beneficiaries and multipliers limits
+            if initial_beneficiaries.len() > MAX_BENEFICIARIES {
+                return Err(Error::MaxBeneficiariesExceeded);
+            }
+            if initial_base_multipliers.len() > MAX_MULTIPLIERS {
+                return Err(Error::MaxMultipliersExceeded);
+            }
+
+            self._create_base_multipliers(initial_base_multipliers);
+
+            self._create_initial_beneficiaries(initial_beneficiaries)?;
+
+            self.active = true;
+
+            Ok(())
         }
 
         fn _create_initial_beneficiaries(
