@@ -60,6 +60,8 @@ mod open_payroll {
         AccountAlreadyExists,
         // Overflow the operation
         Overflow,
+        // Contract is not active
+        ContractNotActive,
     }
 
     /// Emitted when a beneficiary claims their payment
@@ -142,6 +144,12 @@ mod open_payroll {
         periodicity: u32,
     }
 
+    /// Emitted when the Base Payment is updated
+    #[ink(event)]
+    pub struct BasePaymentUpdated {
+        base_payment: Balance,
+    }
+
     /// Emitted when the contract is paused
     #[ink(event)]
     pub struct Paused {}
@@ -205,6 +213,8 @@ mod open_payroll {
     // This design choice enables streamlined retrieval of relevant multiplier information without compromising performance.
     #[ink(storage)]
     pub struct OpenPayroll {
+        /// Active state of the contract
+        active: bool,
         /// The account to be transfered to, until the new owner accept it
         proposed_owner: Option<AccountId>,
         /// The accountId of the creator of the contract, who has 'priviliged' access to do administrative tasks
@@ -233,7 +243,7 @@ mod open_payroll {
 
     /// implementation of the OpenPayroll contract
     impl OpenPayroll {
-        pub fn default(periodicity: u32, base_payment: Balance) -> Self {
+        pub fn default() -> Self {
             // Defines the claims in period
             let claims_in_period = ClaimsInPeriod {
                 period: 0,
@@ -244,12 +254,13 @@ mod open_payroll {
             let owner = Self::env().caller();
 
             Self {
+                active: false,
                 owner,
                 proposed_owner: None,
                 beneficiaries: Default::default(),
                 beneficiaries_accounts: Default::default(),
-                periodicity,
-                base_payment,
+                periodicity: 0,
+                base_payment: 0,
                 initial_block,
                 paused_block_at: None,
                 next_multiplier_id: 0,
@@ -258,6 +269,14 @@ mod open_payroll {
                 claims_in_period,
             }
         }
+
+        #[ink(constructor, payable)]
+        pub fn new_inactive() -> Result<Self, Error> {
+            let instance = Self::default();
+
+            Ok(instance)
+        }
+
         /// Constructor that initializes the owner, the base payment, the periodicity, the initial block, the base multipliers,
         /// and the initial beneficiaries
         #[ink(constructor, payable)]
@@ -267,12 +286,16 @@ mod open_payroll {
             initial_base_multipliers: Vec<String>,
             initial_beneficiaries: Vec<InitialBeneficiary>,
         ) -> Result<Self, Error> {
-            let mut instance = Self::default(periodicity, base_payment);
+            let mut instance = Self::default();
 
             // 0 payment or 0 periodicity make no sense
             if base_payment == 0 || periodicity == 0 {
                 return Err(Error::InvalidParams);
             }
+
+            instance.periodicity = periodicity;
+            instance.base_payment = base_payment;
+            instance.active = true;
 
             // Ensure for duplicate beneficiaries
             ensure_no_duplicate_beneficiaries(
@@ -346,7 +369,7 @@ mod open_payroll {
             account_id: AccountId,
             amount: Balance,
         ) -> Result<(), Error> {
-            self.ensure_is_not_paused()?;
+            self.ensure_is_active_and_not_pause()?;
 
             let beneficiary_res = self.beneficiaries.get(account_id);
 
@@ -494,6 +517,15 @@ mod open_payroll {
             Ok(())
         }
 
+        /// Ensure that the contract is active
+        fn ensure_contract_is_active(&self) -> Result<(), Error> {
+            if !self.active {
+                return Err(Error::ContractNotActive);
+            }
+
+            Ok(())
+        }
+
         /// Reads the paused state from the contract
         #[ink(message)]
         pub fn is_paused(&self) -> bool {
@@ -505,6 +537,12 @@ mod open_payroll {
             if self.is_paused() {
                 return Err(Error::ContractIsPaused);
             }
+            Ok(())
+        }
+
+        fn ensure_is_active_and_not_pause(&self) -> Result<(), Error> {
+            self.ensure_contract_is_active()?;
+            self.ensure_is_not_paused()?;
             Ok(())
         }
 
@@ -601,6 +639,7 @@ mod open_payroll {
         ) -> Result<(), Error> {
             // Calls the function to do the checking
             self.ensure_beneficiary_to_add(account_id, &multipliers)?;
+            self.ensure_contract_is_active()?;
 
             let multipliers_vec = multipliers.clone();
             let multipliers = vec_to_btreemap(&multipliers);
@@ -695,6 +734,8 @@ mod open_payroll {
         #[ink(message)]
         pub fn update_base_payment(&mut self, base_payment: Balance) -> Result<(), Error> {
             self.ensure_owner()?;
+            self.ensure_contract_is_active()?;
+
             if base_payment == 0 {
                 return Err(Error::InvalidParams);
             }
@@ -702,6 +743,8 @@ mod open_payroll {
             // Ensure if all payments are up to date
             self.ensure_all_claimed_in_period()?;
             self.base_payment = base_payment;
+
+            self.env().emit_event(BasePaymentUpdated { base_payment });
 
             Ok(())
         }
@@ -711,6 +754,7 @@ mod open_payroll {
         #[ink(message)]
         pub fn add_base_multiplier(&mut self, name: String) -> Result<(), Error> {
             self.ensure_owner()?;
+            self.ensure_contract_is_active()?;
 
             // Ensure that the number of multipliers does not exceed the maximum
             if self.multipliers_list.len() + 1 > MAX_MULTIPLIERS {
@@ -744,6 +788,8 @@ mod open_payroll {
         #[ink(message)]
         pub fn update_periodicity(&mut self, periodicity: u32) -> Result<(), Error> {
             self.ensure_owner()?;
+            self.ensure_contract_is_active()?;
+
             if periodicity == 0 {
                 return Err(Error::InvalidParams);
             }
@@ -848,6 +894,13 @@ mod open_payroll {
             let current_block = self.env().block_number();
 
             self._get_amount_to_claim_in_block(account_id, filtered_multipliers, current_block)
+        }
+
+        /// Get amount in storage without transferring the funds
+        /// Read Only function
+        #[ink(message)]
+        pub fn get_is_active(&self) -> Result<bool, Error> {
+            Ok(self.active)
         }
 
         /// Get amount in storage without transferring the funds
@@ -1269,7 +1322,7 @@ mod open_payroll {
             btree_map
         }
 
-        /// We test if the default constructor does its job.
+        /// Test if the contract is unactive
         #[ink::test]
         fn default_works() {
             let accounts = default_accounts();
