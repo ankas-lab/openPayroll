@@ -43,3 +43,13 @@ All the posible interactions with the contract, including:
   - Claim the payments that are already available.
 
 Further information about the Front-end can be found [here](./website/README.md)
+
+## Testing
+
+```bash
+    docker build -t open-payroll:0.1.0 .
+```
+
+```bash
+    docker run open-payroll:0.1.0
+```
