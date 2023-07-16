@@ -762,25 +762,20 @@ mod open_payroll {
         /// Get amount in storage without transferring the funds
         /// Read Only function
         #[ink(message)]
-        pub fn get_amount_to_claim(&self, account_id: AccountId) -> Result<Balance, Error> {
+        pub fn get_amount_to_claim(&self, account_id: AccountId) -> Option<Balance> {
             if !self.beneficiaries.contains(account_id) {
-                return Err(Error::AccountNotFound);
+                return None;
             }
 
             let result = self._get_amount_to_claim(account_id, false);
-
-            Ok(result)
+            Some(result)
         }
 
         /// Get beneficiary only read
         /// Read Only function
         #[ink(message)]
-        pub fn get_beneficiary(&mut self, account_id: AccountId) -> Result<Beneficiary, Error> {
-            if !self.beneficiaries.contains(account_id) {
-                return Err(Error::AccountNotFound);
-            }
-            let beneficiary = self.beneficiaries.get(account_id).unwrap();
-            Ok(beneficiary)
+        pub fn get_beneficiary(&mut self, account_id: AccountId) -> Option<Beneficiary> {
+            self.beneficiaries.get(account_id)
         }
 
         /// Get current block period
