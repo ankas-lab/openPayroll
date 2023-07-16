@@ -4,7 +4,7 @@ FROM rust:1.69
 # Clone the repository
 COPY . ./
 
-WORKDIR /contracts
+WORKDIR /src
 
 # Update Rust and install cargo contract
 RUN rustup update \
