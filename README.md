@@ -2,44 +2,84 @@
 
 ## Overview
 
-The objective of Open Payroll is to meet the needs of organizations that wish to make transparent payments during a given period.
-The objective is to create a contract that enables anyone to configure and generate their own payroll system.
+The goal of Open Payroll is to address the needs of organizations seeking to establish transparent payment processes within a specific timeframe. Its primary objective is to develop a contract that empowers individuals to configure and generate their own payroll system.
 
-The payroll contract is owned entirely by its creator. This creator could be a DAO address, a multisig or a single person. The contract manages a treasury from where all the payments are deducted. There is a base amount and a set of multipliers associated to the addresses of the payees.
+The ownership of the payroll contract resides entirely with its creator, who can be a DAO address, a multisig, or an individual. This contract operates by managing a treasury, from which all payments are deducted. The system comprises a base amount and a series of multipliers associated with the payees' addresses.
 
-E.g. We create a payroll contract for paying developers salaries. We will have a base amount and only one multiplier which is the employee's seniority.
-Alice is a junior employee and Bob is a senior employee. Alice's multiplier is 1 and Bob's multiplier is 2. The base amount is 1000. The payroll contract will allow Alice to claim 1000 and Bob 2000 every period.
+For example, let's consider a payroll contract designed to pay developers' salaries. It includes a base amount and a single multiplier based on the employee's seniority level. Alice is a junior employee with a multiplier of 1, while Bob is a senior employee with a multiplier of 2. With a base amount of 1000, the payroll contract allows Alice to claim 1000 units, and Bob to claim 2000 units during each payment period.
 
-The payroll smart contract transparently displays the addresses of all participants, along with the multipliers being utilized, allowing complete visibility to everyone. The initial rollout of this project is a super opinionated and geared towards an open payroll system, but this notion will allow us to build on various scenarios, such as any kind of recurring payments, subscriptions, etc.
+The payroll smart contract provides transparent visibility by displaying the addresses of all participants, along with the multipliers employed. This openness ensures complete transparency for everyone involved. Initially, the project focuses on an open payroll system with a specific approach, but it lays the foundation for further development, enabling scenarios like recurring payments, subscriptions, and more.
 
-## About the contract
+## Interactions and Functionality of the Payroll Contract
 
-Build an Ink! contract, which purpose is to manage a treasury, that can be spent by the parameters set by the owner at creation point. Those parameters can be changed over the time and more beneficiaries can be added or removed. The funds in the treasury can be withdrawn by the owner of the contract if needed. This could be helpful in the case of migrating to a new version of openPayroll, amending a mistake of sending too much funds, etc. 
+O - Creation Parameters for creating a new payroll contract:
 
-Further information about the contract can be found [here](./contracts/README.md)
-## About the interactions in the FE
+- Periodicity
+- Base Payment
+- Initial Base Multipliers
+- Initial Beneficiaries
 
-All the posible interactions with the contract, including:
+O - Contract Interactions from the Owner's Perspective:
 
-- Creation parameters needed to create a new payroll contract:
+- Modify the existing parameters in the contract.
+- Add, update or remove beneficiaries.
+- Add and withdraw funds from the treasury.
+- Pause the contract, temporarily suspending the claim process,  halting any further payment disbursements.
+- Resume the contract, restoring its functionality.
+- Change the owner of the contract.
 
-  - Base amount
-  - Multipliers
-  - Period
-  - Beneficiaries
+O - Contract Interactions from the Payees' Perspective:
 
-- Contract interactions from the owner's perspective:
+- Claim the payments that are already available for them.
 
-  - Change the current parameters in the contract.
-  - Add or remove beneficiaries.
-  - Withdraw funds from the treasury.
-  - Pause the contract.
-  - Change the owner of the contract.
-  - Calculate the amount that will be paid in the next period.
+## Design decisions:
 
-- Contract interactions from the payees' perspective:
-  - Calculate the amount that they can claim.
-  - Calculate the amount that they can claim in the next period with the current parameters.
-  - Claim the payments that are already available.
+Here are some key technical decisions we made during the development:
 
-Further information about the Front-end can be found [here](./website/README.md)
+- Initial Block Set to Current Block: In this version, the initial block is set to the current block. This ensures that the blockchain starts recording data from the present time.
+
+- Owner Assignment: The owner of the contract is set to the account that called the constructor. This establishes the initial ownership of the contract.
+
+- Base Multipliers Flexibility: The base multipliers can be left empty, indicating that no multiplier will be applied. In such cases, the beneficiary will receive just the base payment during each payment period.
+
+- Multiplier Calculation: Multipliers are used to calculate the corresponding payment. For example, if the base payment is 1000 and there are multipliers such as seniority (2) and experience in the project (0.5), the calculation would be as follows: base payment (1000) * (seniority (2) + experience in the project (0.5)) = total for the period (2500).
+
+- Ensuring Payment Completeness: The function ensure_all_payments_uptodate serves the purpose of checking if there are any remaining amounts to be claimed before changing core parameters. This check ensures that past periods' payment amounts are not altered.
+
+- Pausable Contracts: The created contracts are equipped with the ability to be paused using the pause/resume function. This functionality can only be invoked by the contract's owner, providing control over the contract's operation.
+
+
+## 🚀 Compile and test the contract
+
+- Clone the repository with the following command and enter the project folder:
+
+    ```bash
+    git clone https://github.com/polkadrys/openPayroll.git && cd openPayroll
+    ```
+
+### Docker
+
+- ⚠️ Requirements:
+  - docker >= 20
+
+1. Make sure your daemon `docker` is running in your system.
+
+2. Build the docker image:
+
+    ```bash
+    docker build -t open-payroll:0.1.0 .
+    ```
+
+    #### Compile the contract
+
+    ```bash
+    docker run -v ./src:/src open-payroll:0.1.0 cargo contract build --release
+    ```
+    
+    > 🔍 You will find the contract artifacts in the `src/target/ink` folder. 
+
+    #### Run the tests
+ 
+    ```bash
+    docker run -v ./src:/src open-payroll:0.1.0
+    ```

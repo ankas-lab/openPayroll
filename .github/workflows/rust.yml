@@ -93,4 +93,4 @@ jobs:
 
       - name: ${{ matrix.job }} on ${{ matrix.platform }}-${{ matrix.toolchain }}
         run: |
-           cd contracts ; cargo ${{ matrix.job }} --verbose
+           cd src ; cargo ${{ matrix.job }} --verbose
