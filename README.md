@@ -73,7 +73,7 @@ Here are some key technical decisions we made during the development:
     #### Compile the contract
 
     ```bash
-    docker run -v ./src:/src open-payroll:0.1.0 cargo contract build --release
+    docker run -v "$(pwd)/src:/src" open-payroll:0.1.0 cargo contract build --release
     ```
     
     > 🔍 You will find the contract artifacts in the `src/target/ink` folder. 
@@ -81,5 +81,5 @@ Here are some key technical decisions we made during the development:
     #### Run the tests
  
     ```bash
-    docker run -v ./src:/src open-payroll:0.1.0
+    docker run -v "$(pwd)/src:/src" open-payroll:0.1.0
     ```
