@@ -1056,7 +1056,7 @@ mod open_payroll {
                 1
             } else {
                 match filtered_multipliers {
-                    true => beneficiary.multipliers.values().sum(),
+                    true => beneficiary.multipliers.values().product(),
                     _ => beneficiary
                         .multipliers
                         .iter()
@@ -1068,7 +1068,7 @@ mod open_payroll {
                                 .is_none()
                         })
                         .map(|(_, v)| v)
-                        .sum(),
+                        .product(),
                 }
             };
 
