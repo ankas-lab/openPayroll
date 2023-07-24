@@ -1186,9 +1186,9 @@ mod open_payroll {
                 account_id: accounts.bob,
                 multipliers: vec![(0, 100), (1, 3)],
             };
-            let beneficiary_charlie = InitialBeneficiary {
+            let beneficiary_charlie: InitialBeneficiary = InitialBeneficiary {
                 account_id: accounts.charlie,
-                multipliers: vec![(0, 100), (1, 3)],
+                multipliers: vec![(0, 100), (1, 2)],
             };
             OpenPayroll::new(
                 2,
@@ -1914,7 +1914,7 @@ mod open_payroll {
                     .get(accounts.charlie)
                     .unwrap()
                     .multipliers,
-                vec_to_btreemap(&[(0, 100), (1, 3)])
+                vec_to_btreemap(&[(0, 100), (1, 2)])
             );
         }
 
@@ -2009,7 +2009,7 @@ mod open_payroll {
                 .unwrap();
 
             // check final amount
-            assert_eq!(contract.get_contract_balance(), 99998971u128);
+            assert_eq!(contract.get_contract_balance(), 99997001u128);
         }
 
         // check for get_unclaimed_beneficiaries and get_count_of_unclaim_beneficiaries in diffent blocks
@@ -2081,7 +2081,7 @@ mod open_payroll {
             let total_debts = contract.get_total_debts();
 
             // check the specifi value and the sum of both individual debts
-            assert_eq!(total_debts, 2060);
+            assert_eq!(total_debts, 5000);
             assert_eq!(total_debts, bob_amount_claim + charlie_amount_claim);
 
             // check if the balance with debts is correct (total_balance - total_debts)
@@ -2122,7 +2122,7 @@ mod open_payroll {
             let (_, contract) = create_accounts_and_contract(100_000_001u128);
 
             let total_debts = contract.get_total_debt_with_unclaimed_for_next_period();
-            assert_eq!(total_debts, 2060);
+            assert_eq!(total_debts, 5000);
         }
 
         /// Test 2 readonly function related with total debts for next period
@@ -2137,8 +2137,8 @@ mod open_payroll {
                 contract.get_total_debt_with_unclaimed_for_next_period();
             let total_debts_next_period = contract.get_total_debt_for_next_period();
 
-            assert_eq!(total_debts_with_unclaimed, 4120);
-            assert_eq!(total_debts_next_period, 2060);
+            assert_eq!(total_debts_with_unclaimed, 10000);
+            assert_eq!(total_debts_next_period, 5000);
         }
 
         // Check if dispatch error when adding more thatn beneficiaries allowed
