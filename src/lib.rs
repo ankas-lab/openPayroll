@@ -1052,27 +1052,44 @@ mod open_payroll {
         ) -> Balance {
             // E.g (M1 + M2) * B / 100
             // Sum all active multipliers
-            let final_multiplier: u128 = if beneficiary.multipliers.is_empty() {
-                1
-            } else {
-                match filtered_multipliers {
-                    true => beneficiary.multipliers.values().product(),
-                    _ => beneficiary
-                        .multipliers
-                        .iter()
-                        .filter(|(k, _)| {
-                            self.base_multipliers
-                                .get(k)
-                                .unwrap()
-                                .valid_until_block
-                                .is_none()
-                        })
-                        .map(|(_, v)| v)
-                        .product(),
-                }
-            };
+            let (final_multiplier, multipliers_len): (u128, usize) =
+                if beneficiary.multipliers.is_empty() {
+                    (1, 0)
+                } else {
+                    match filtered_multipliers {
+                        true => (
+                            beneficiary.multipliers.values().product(),
+                            beneficiary.multipliers.len(),
+                        ),
+                        _ => (
+                            beneficiary
+                                .multipliers
+                                .iter()
+                                .filter(|(k, _)| {
+                                    self.base_multipliers
+                                        .get(k)
+                                        .unwrap()
+                                        .valid_until_block
+                                        .is_none()
+                                })
+                                .map(|(_, v)| v)
+                                .product(),
+                            beneficiary
+                                .multipliers
+                                .iter()
+                                .filter(|(k, _)| {
+                                    self.base_multipliers
+                                        .get(k)
+                                        .unwrap()
+                                        .valid_until_block
+                                        .is_none()
+                                })
+                                .count(),
+                        ),
+                    }
+                };
 
-            final_multiplier * self.base_payment / 100
+            final_multiplier * self.base_payment / Self::pow_u128(100, multipliers_len as u32)
         }
 
         // internal function to get the amount to claim
@@ -1116,6 +1133,14 @@ mod open_payroll {
             }
 
             Err(Error::NotAllClaimedInPeriod)
+        }
+
+        fn pow_u128(base: u128, exponent: u32) -> u128 {
+            match exponent {
+                0 => 1,
+                1 => base,
+                _ => base * Self::pow_u128(base, exponent - 1),
+            }
         }
     }
 
