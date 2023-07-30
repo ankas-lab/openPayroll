@@ -81,5 +81,5 @@ Here are some key technical decisions we made during the development:
     #### Run the tests
  
     ```bash
-    docker run -v "$(pwd)/src:/src" open-payroll:0.1.0
+    docker run -v "$(pwd)/src:/src" open-payroll:0.1.0 cargo test
     ```
