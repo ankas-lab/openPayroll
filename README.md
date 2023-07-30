@@ -65,21 +65,27 @@ Here are some key technical decisions we made during the development:
 1. Make sure your daemon `docker` is running in your system.
 
 2. Build the docker image:
+> ⚠️ This step may take a while to complete.
 
-    ```bash
+  ```bash
     docker build -t open-payroll:0.1.0 .
-    ```
+  ```
 
-    #### Compile the contract
+3. Execute the following commands to compile and test the contract:
+> ⚠️ This step may take a while to complete.
 
-    ```bash
+> ⚠️ Before executing the following commands, ensure that the target folder within the /src directory does not exist. In case it already exists, delete it first and then run the commands.
+
+  #### Compile the contract
+
+  ```bash
     docker run -v "$(pwd)/src:/src" open-payroll:0.1.0 cargo contract build --release
-    ```
+  ```
     
-    > 🔍 You will find the contract artifacts in the `src/target/ink` folder. 
+  > 🔍 You will find the contract artifacts in the `src/target/ink` folder. 
 
-    #### Run the tests
+  #### Run the tests
  
-    ```bash
-    docker run -v "$(pwd)/src:/src" open-payroll:0.1.0
-    ```
+  ```bash
+    docker run -v "$(pwd)/src:/src" open-payroll:0.1.0 cargo test
+  ```
